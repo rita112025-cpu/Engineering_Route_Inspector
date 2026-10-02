@@ -45,25 +45,41 @@ class Report:
         return self.evidence.get(issue.get("evidence_id") or "")
 
     def required_text(self, issue: dict) -> str:
-        if issue["required_value"] is None:
-            return ""
-        unit = "°" if issue["unit"] == "deg" else (f" {issue['unit']}" if issue["unit"] not in ("", "count") else "")
-        return f"{issue['required_op']} {issue['required_value']:g}{unit}"
+        return required_text(issue)
 
     def measured_text(self, issue: dict) -> str:
-        if issue["measured"] is None:
-            return ""
-        unit = "°" if issue["unit"] == "deg" else (f" {issue['unit']}" if issue["unit"] not in ("", "count") else "")
-        return f"{issue['measured']:g}{unit}"
+        return measured_text(issue)
 
     def evidence_ref_text(self, issue: dict) -> str:
-        ev = self.evidence_of(issue)
-        if not ev:
-            return ""
-        page = f" 第{ev['page']}頁" if ev["page"] is not None else ""
-        lines = (f"第{ev['line_start']}行" if ev["line_start"] == ev["line_end"]
-                 else f"第{ev['line_start']}-{ev['line_end']}行")
-        return f"{ev['filename']}{page} {lines}"
+        return evidence_ref_text(self.evidence_of(issue))
+
+
+def _unit_suffix(issue: dict) -> str:
+    if issue["unit"] == "deg":
+        return "°"
+    return f" {issue['unit']}" if issue["unit"] not in ("", "count", None) else ""
+
+
+def required_text(issue: dict) -> str:
+    if issue["required_value"] is None:
+        return ""
+    return f"{issue['required_op']} {issue['required_value']:g}{_unit_suffix(issue)}"
+
+
+def measured_text(issue: dict) -> str:
+    if issue["measured"] is None:
+        return ""
+    return f"{issue['measured']:g}{_unit_suffix(issue)}"
+
+
+def evidence_ref_text(ev: dict | None) -> str:
+    """'spec.pdf 第3頁 第12-14行' for an evidence row (empty when there is none)."""
+    if not ev:
+        return ""
+    page = f" 第{ev['page']}頁" if ev["page"] is not None else ""
+    lines = (f"第{ev['line_start']}行" if ev["line_start"] == ev["line_end"]
+             else f"第{ev['line_start']}-{ev['line_end']}行")
+    return f"{ev['filename']}{page} {lines}"
 
 
 def status_zh(status: str) -> str:

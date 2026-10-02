@@ -120,6 +120,14 @@ class Repo:
                                                       "entities": len(entities)})
         return self.get_drawing(did)
 
+    def drawing_by_stored_name(self, project_id: str, stored_name: str) -> dict | None:
+        r = self.one("SELECT id FROM drawings WHERE project_id = ? AND stored_name = ?", (project_id, stored_name))
+        return self.get_drawing(r["id"]) if r else None
+
+    def document_by_stored_name(self, project_id: str, stored_name: str) -> dict | None:
+        r = self.one("SELECT id FROM documents WHERE project_id = ? AND stored_name = ?", (project_id, stored_name))
+        return self.get_document(r["id"]) if r else None
+
     def get_drawing(self, did: str) -> dict | None:
         d = self.one("SELECT * FROM drawings WHERE id = ?", (did,))
         if d:
@@ -158,6 +166,18 @@ class Repo:
         r = self.conn.execute("SELECT MIN(minx), MIN(miny), MAX(maxx), MAX(maxy) FROM entities WHERE drawing_id = ?",
                               (did,)).fetchone()
         return tuple(r) if r and r[0] is not None else None
+
+    def entities_by_handles(self, did: str, handles: Sequence[str], limit: int = 100) -> list[dict]:
+        """Geometry of specific entities (used to locate an issue in the viewer)."""
+        handles = list(dict.fromkeys(handles))[:limit]
+        if not handles:
+            return []
+        marks = ",".join("?" * len(handles))
+        return [{"handle": r["handle"], "layer": r["layer"], "type": r["entity_type"],
+                 "g": json.loads(r["geometry_json"])}
+                for r in self.conn.execute(
+                    f"SELECT handle, layer, entity_type, geometry_json FROM entities WHERE drawing_id = ? "
+                    f"AND handle IN ({marks}) ORDER BY seq", (did, *handles))]
 
     def entity_rows(self, did: str) -> list[dict]:
         """Compact geometry for the viewer."""
