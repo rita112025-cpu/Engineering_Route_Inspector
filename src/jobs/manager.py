@@ -26,6 +26,7 @@ from persistence.repo import Repo
 SRC_DIR = Path(__file__).resolve().parents[1]
 CANCEL_GRACE_SECONDS = 5.0
 POLL_SECONDS = 0.25
+DEFAULT_RUN_TIMEOUT = 1800.0   # seconds; last line of defence against a run that never ends
 
 
 @dataclass
@@ -84,7 +85,9 @@ def same_process(pid: int | None, create_time: float | None):
 
 
 class JobManager:
-    def __init__(self, data_dir: str | Path, max_workers: int = 1):
+    def __init__(self, data_dir: str | Path, max_workers: int = 1, run_timeout: float | None = None):
+        self.run_timeout = float(run_timeout if run_timeout is not None
+                                 else os.environ.get("ERI_RUN_TIMEOUT", DEFAULT_RUN_TIMEOUT))
         self.data_dir = Path(data_dir).resolve()
         self.db_path = self.data_dir / "eri.sqlite3"
         self.logs_dir = self.data_dir / "logs"
@@ -191,6 +194,14 @@ class JobManager:
             if t.cancel_seen is None:
                 if self.repo.cancel_requested(rid):
                     t.cancel_seen = now
+                elif now - t.started > self.run_timeout and t.exit_code() is None:
+                    t.kill()
+                    self.repo.finish_run(
+                        rid, "failed", error_code="RUN_TIMEOUT",
+                        error_message=f"分析超過時間上限（{self.run_timeout:.0f} 秒）而被停止。"
+                                      "可能是規則或圖面過於複雜，請簡化規則後重試。",
+                        error_detail=_log_tail(t.log_path))
+                    self._event("timeout", rid)
                 continue
             if now - t.cancel_seen > CANCEL_GRACE_SECONDS and t.exit_code() is None:
                 t.kill()

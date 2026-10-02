@@ -13,7 +13,7 @@ Point = tuple[float, float]
 BBox = tuple[float, float, float, float]  # minx, miny, maxx, maxy
 
 GEOMETRIC_KINDS = ("polyline", "circle")
-CIRCLE_SEGMENTS = 48
+CIRCLE_SEGMENTS = 180   # polygon used only for containment / zone tests; distances are exact
 
 
 @dataclass

@@ -76,16 +76,48 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", "", t)
 
 
+_NUM_RE = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+
+
+def numbers_in(text: str) -> list[float]:
+    """Numbers written in ``text`` (full-width digits and thousands separators handled)."""
+    t = unicodedata.normalize("NFKC", text or "")
+    return [float(m.replace(",", "")) for m in _NUM_RE.findall(t)]
+
+
+def _inside_larger_number(nt: str, start: int, end: int) -> bool:
+    """True when nt[start:end] begins or ends in the middle of a number (``300`` inside ``1300``/``300.5``)."""
+    if nt[start].isdigit():
+        if start > 0 and nt[start - 1].isdigit():
+            return True
+        if start > 1 and nt[start - 1] in ".," and nt[start - 2].isdigit():
+            return True
+    if nt[end - 1].isdigit():
+        if end < len(nt) and nt[end].isdigit():
+            return True
+        if end + 1 < len(nt) and nt[end] in ".," and nt[end + 1].isdigit():
+            return True
+    return False
+
+
 def find_by_quote(chunks: Iterable[EvidenceChunk], quote: str, document: str | None = None) -> EvidenceChunk | None:
-    """Exact (whitespace/width-insensitive) substring lookup. No fuzzy guessing."""
+    """Exact (whitespace/width-insensitive) substring lookup. No fuzzy guessing.
+
+    A quote that starts or ends with a digit must start/end on a number
+    boundary, so ``300 mm`` is never found inside ``1300 mm`` or ``0.300 mm``.
+    """
     q = normalize(quote or "")
     if not q:
         return None
     for c in chunks:
         if document and c.filename.casefold() != document.casefold():
             continue
-        if q in normalize(c.text):
-            return c
+        nt = normalize(c.text)
+        pos = nt.find(q)
+        while pos != -1:
+            if not _inside_larger_number(nt, pos, pos + len(q)):
+                return c
+            pos = nt.find(q, pos + 1)
     return None
 
 

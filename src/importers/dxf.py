@@ -9,13 +9,23 @@ from pathlib import Path
 
 from core.models.entities import GeometryEntity, make_circle, make_polyline, make_text
 
-INSUNITS_TO_MM = {1: 25.4, 2: 304.8, 4: 1.0, 5: 10.0, 6: 1000.0, 8: 0.0000254, 9: 0.0254, 10: 914.4,
-                  14: 100.0, 3: 1609344.0, 7: 1000000.0}
-INSUNITS_NAME = {0: "未指定", 1: "inch", 2: "feet", 4: "mm", 5: "cm", 6: "m", 14: "dm"}
+# $INSUNITS code -> millimetres per drawing unit (AutoCAD drawing-units table, codes 1-16 and 21-24;
+# the astronomical units 17-20 are not supported and reported as such)
+INSUNITS_TO_MM = {
+    1: 25.4, 2: 304.8, 3: 1609344.0, 4: 1.0, 5: 10.0, 6: 1000.0, 7: 1_000_000.0,
+    8: 0.0000254, 9: 0.0254, 10: 914.4, 11: 1e-7, 12: 1e-6, 13: 1e-3, 14: 100.0, 15: 10_000.0, 16: 100_000.0,
+    21: 1200 / 3937 * 1000, 22: 25.4000508, 23: 3 * 1200 / 3937 * 1000, 24: 5280 * 1200 / 3937 * 1000,
+}
+INSUNITS_NAME = {0: "未指定", 1: "inch", 2: "feet", 3: "mile", 4: "mm", 5: "cm", 6: "m", 7: "km",
+                 8: "microinch", 9: "mil", 10: "yard", 11: "angstrom", 12: "nm", 13: "µm", 14: "dm",
+                 15: "dam", 16: "hm", 21: "US survey foot", 22: "US survey inch", 23: "US survey yard",
+                 24: "US survey mile"}
+CHORD_TOLERANCE_MM = 0.1   # arcs/ellipses/splines are polylines within this chord error
 SUPPORTED = {"LINE", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE", "INSERT", "TEXT", "MTEXT",
              "ELLIPSE", "SPLINE", "ATTRIB"}
 MAX_BLOCK_DEPTH = 8
 MAX_ENTITIES = 2_000_000
+MAX_MINSERT = 100_000      # cells of one MINSERT array that are expanded
 
 
 class DrawingImportError(Exception):
@@ -63,7 +73,8 @@ def _open(path: Path):
 class _Builder:
     def __init__(self, source_file: str, unit_to_mm: float):
         self.source = source_file
-        self.sagitta = 0.5 / unit_to_mm if unit_to_mm else 0.5  # ~0.5 mm chord error
+        self.sagitta = CHORD_TOLERANCE_MM / unit_to_mm if unit_to_mm else CHORD_TOLERANCE_MM
+        self.capped = False
         self.entities: list[GeometryEntity] = []
         self.counts: Counter = Counter()
         self.skipped: Counter = Counter()
@@ -80,9 +91,19 @@ class _Builder:
             md.update(extra)
         return md
 
+    def at_cap(self) -> bool:
+        if len(self.entities) >= MAX_ENTITIES:
+            if not self.capped:
+                self.warnings.append(f"物件數超過上限 {MAX_ENTITIES}，其餘略過")
+                self.capped = True
+            return True
+        return False
+
     def add(self, e, m, handle_path: str, layer: str, block_path: list[str]):
         from ezdxf import path as ezpath
         from ezdxf.math import Vec3
+        if self.at_cap():
+            return
         t = e.dxftype()
         hid = f"{self.source}#{handle_path}"
         extra = {"block_path": block_path} if block_path else {}
@@ -92,7 +113,10 @@ class _Builder:
                     self.skipped["POLYLINE(mesh)"] += 1
                     return
                 p = ezpath.make_path(e)
-                pts3 = list(p.flattening(self.sagitta)) if len(p) or t == "LINE" else [p.start]
+                if t == "ARC":      # vertices taken from the true circle (no Bezier approximation)
+                    pts3 = list(e.flattening(self.sagitta))
+                else:
+                    pts3 = list(p.flattening(self.sagitta)) if len(p) or t == "LINE" else [p.start]
                 if m is not None:
                     pts3 = list(m.transform_vertices(pts3))
                 if len(pts3) < 2:
@@ -122,8 +146,6 @@ class _Builder:
                     uy = m.transform_direction(Vec3(0, 1, 0)) if m is not None else Vec3(0, 1, 0)
                     uniform = abs(ux.magnitude - uy.magnitude) < 1e-9 and abs(ux.dot(uy)) < 1e-9
                     if uniform:
-                        cx = sum(v.x for v in pts3[:-1]) / max(1, len(pts3) - 1)
-                        cy = sum(v.y for v in pts3[:-1]) / max(1, len(pts3) - 1)
                         center = m.transform(e.dxf.center) if m is not None else c
                         self.entities.append(make_circle(hid, handle_path, self.source, layer,
                                                          (center.x, center.y), r * ux.magnitude,
@@ -155,10 +177,25 @@ class _Builder:
             if len(self.warnings) < 20:
                 self.warnings.append(f"物件 {handle_path}（{t}）無法解析：{exc}")
 
+    def expand_insert(self, ins, doc, m, hp: str, layer: str, block_path: list[str], depth: int) -> None:
+        name = ins.dxf.name
+        if depth >= MAX_BLOCK_DEPTH:
+            self.warnings.append(f"圖塊 {name}（{hp}）巢狀超過 {MAX_BLOCK_DEPTH} 層，停止展開")
+            return
+        if name in block_path:
+            self.warnings.append(f"圖塊 {name}（{hp}）遞迴參照自己，停止展開")
+            return
+        block = doc.blocks.get(name)
+        if block is None:
+            self.warnings.append(f"找不到圖塊定義 {name}（{hp}）")
+            return
+        mi = ins.matrix44()
+        mm = mi if m is None else mi * m  # apply block transform first, then parent
+        self.walk(block, doc, mm, hp, layer, block_path + [name], depth + 1)
+
     def walk(self, entities, doc, m, prefix: str, parent_layer: str | None, block_path: list[str], depth: int):
         for e in entities:
-            if len(self.entities) >= MAX_ENTITIES:
-                self.warnings.append(f"物件數超過上限 {MAX_ENTITIES}，其餘略過")
+            if self.at_cap():
                 return
             t = e.dxftype()
             handle = e.dxf.handle or "?"
@@ -168,22 +205,18 @@ class _Builder:
                 layer = parent_layer
             if t == "INSERT":
                 self.counts["INSERT"] += 1
-                name = e.dxf.name
-                if depth >= MAX_BLOCK_DEPTH:
-                    self.warnings.append(f"圖塊 {name}（{hp}）巢狀超過 {MAX_BLOCK_DEPTH} 層，停止展開")
-                    continue
-                if name in block_path:
-                    self.warnings.append(f"圖塊 {name}（{hp}）遞迴參照自己，停止展開")
-                    continue
-                block = doc.blocks.get(name)
-                if block is None:
-                    self.warnings.append(f"找不到圖塊定義 {name}（{hp}）")
-                    continue
-                mi = e.matrix44()
-                mm = mi if m is None else mi * m  # apply block transform first, then parent
-                self.walk(block, doc, mm, hp, layer, block_path + [name], depth + 1)
+                cells = int(e.mcount)
+                if cells > 1:                                   # MINSERT: rows x columns array
+                    if cells > MAX_MINSERT:
+                        self.warnings.append(
+                            f"陣列插入 {e.dxf.name}（{hp}）有 {cells} 個單元，超過上限 {MAX_MINSERT}，未展開")
+                        continue
+                    for k, virtual in enumerate(e.multi_insert()):
+                        self.expand_insert(virtual, doc, m, f"{hp}[{k}]", layer, block_path, depth)
+                else:
+                    self.expand_insert(e, doc, m, hp, layer, block_path, depth)
                 for att in e.attribs:
-                    self.add(att, None, f"{hp}>{att.dxf.handle}", att.dxf.layer, block_path + [name])
+                    self.add(att, m, f"{hp}>{att.dxf.handle}", att.dxf.layer, block_path + [e.dxf.name])
                 continue
             if t not in SUPPORTED:
                 self.skipped[t] += 1
@@ -200,7 +233,10 @@ def load_dxf(path: str | Path, source_name: str | None = None) -> DrawingImport:
     assumed = unit_to_mm is None
     if assumed:
         unit_to_mm = 1.0
-        warnings.append("圖面未宣告單位（$INSUNITS），以 mm 推定")
+        if code == 0:
+            warnings.append("圖面未宣告單位（$INSUNITS），以 mm 推定")
+        else:
+            warnings.append(f"圖面單位代碼 $INSUNITS={code} 不支援，以 mm 推定")
     b = _Builder(source_name or path.name, unit_to_mm)
     b.warnings.extend(warnings)
     b.walk(doc.modelspace(), doc, None, "", None, [], 0)

@@ -17,9 +17,10 @@ from persistence.db import connect
 from persistence.repo import Repo
 from .conftest import CLEARANCE, ruleset
 
-# A pathological (catastrophic backtracking) regex: matching it never yields to
-# cancel_check, which is exactly the "worker does not respond" case.
-HANG_RULE = {"id": "HANG", "name": "hang", "subject": {"entity_type": "TEXT", "text_regex": "^(a+)+$"},
+# A pathological (catastrophic backtracking) regex that the nested-quantifier guard cannot
+# recognise: matching it never yields to cancel_check, which is exactly the "worker does not
+# respond" case that the force-kill and the run timeout exist for.
+HANG_RULE = {"id": "HANG", "name": "hang", "subject": {"entity_type": "TEXT", "text_regex": "^(a|aa)+$"},
              "measurement": "entity_count", "operator": ">=", "value": 1}
 
 
@@ -225,3 +226,17 @@ def test_worker_cli_rejects_bad_arguments(tmp_path):
     from jobs.worker import main
     assert main(["--data-dir", str(tmp_path), "--run-id", "../../x"]) == 2
     assert main(["--data-dir", str(tmp_path), "--run-id", "run_0123456789abcdef"]) == 2
+
+
+def test_run_timeout_stops_a_run_that_never_ends(env, ef):
+    p, d, rs = env.project_with_drawing([ef.text("NOTE", (0, 0), "a" * 40 + "!")], rules=ruleset(HANG_RULE))
+    r = env.repo.create_run(p["id"], d, rs, None)
+    m = M.JobManager(env.storage.data_dir, run_timeout=1.5)
+    try:
+        m.start()
+        _wait(lambda: _status(env, r["id"])["status"] == "failed", timeout=20)
+        run = _status(env, r["id"])
+        assert run["error_code"] == "RUN_TIMEOUT" and "時間上限" in run["error_message"]
+        assert M.same_process(run["worker_pid"], None) is None
+    finally:
+        m.stop()

@@ -21,10 +21,55 @@ PAIR_KEYS = {"different_layer", "same_layer", "different_system", "same_system"}
 COMBINATORS = {"and", "or", "not"}
 MAX_DEPTH = 16
 MAX_REGEX_LEN = 200
+MAX_MATCH_TEXT = 2000   # characters of a layer name / text entity that regexes look at
+
+try:                     # Python 3.11+
+    import re._parser as _sre_parse
+except ImportError:      # pragma: no cover - older Pythons
+    import sre_parse as _sre_parse
+_REPEATS = (_sre_parse.MAX_REPEAT, _sre_parse.MIN_REPEAT)
 
 
 class PredicateError(ValueError):
     pass
+
+
+def _contains_unbounded_repeat(tree) -> bool:
+    for op, av in tree:
+        if op in _REPEATS:
+            if av[1] == _sre_parse.MAXREPEAT or _contains_unbounded_repeat(av[2]):
+                return True
+        elif op == _sre_parse.SUBPATTERN:
+            if _contains_unbounded_repeat(av[-1]):
+                return True
+        elif op == _sre_parse.BRANCH:
+            if any(_contains_unbounded_repeat(b) for b in av[1]):
+                return True
+        elif op in (_sre_parse.ASSERT, _sre_parse.ASSERT_NOT):
+            if _contains_unbounded_repeat(av[1]):
+                return True
+    return False
+
+
+def _nested_unbounded(tree) -> bool:
+    """An unbounded repeat (+, *, {n,}) around something that itself repeats: the classic
+    catastrophic-backtracking shape, e.g. ``(a+)+`` or ``(\\w+\\s?)*``."""
+    for op, av in tree:
+        if op in _REPEATS:
+            if av[1] == _sre_parse.MAXREPEAT and _contains_unbounded_repeat(av[2]):
+                return True
+            if _nested_unbounded(av[2]):
+                return True
+        elif op == _sre_parse.SUBPATTERN:
+            if _nested_unbounded(av[-1]):
+                return True
+        elif op == _sre_parse.BRANCH:
+            if any(_nested_unbounded(b) for b in av[1]):
+                return True
+        elif op in (_sre_parse.ASSERT, _sre_parse.ASSERT_NOT):
+            if _nested_unbounded(av[1]):
+                return True
+    return False
 
 
 @lru_cache(maxsize=512)
@@ -32,9 +77,13 @@ def compile_regex(pattern: str) -> re.Pattern:
     if len(pattern) > MAX_REGEX_LEN:
         raise PredicateError(f"正規表示式太長（上限 {MAX_REGEX_LEN} 字元）")
     try:
-        return re.compile(pattern, re.IGNORECASE)
+        compiled = re.compile(pattern, re.IGNORECASE)
+        parsed = _sre_parse.parse(pattern, re.IGNORECASE)
     except re.error as exc:
         raise PredicateError(f"正規表示式格式錯誤：{pattern}（{exc}）") from exc
+    if _nested_unbounded(parsed):
+        raise PredicateError(f"正規表示式含有巢狀的重複量詞，可能造成回溯爆炸而卡住分析：{pattern}")
+    return compiled
 
 
 def validate(node: Any, kind: str = "entity", depth: int = 0) -> None:
@@ -87,7 +136,7 @@ def match_entity(node: dict, e: GeometryEntity) -> bool:
             if match_entity(val, e):
                 return False
         elif key == "layer_regex":
-            if not compile_regex(val).search(e.layer):
+            if not compile_regex(val).search(e.layer[:MAX_MATCH_TEXT]):
                 return False
         elif key == "layer_equals":
             if e.layer.casefold() != val.casefold():
@@ -103,7 +152,7 @@ def match_entity(node: dict, e: GeometryEntity) -> bool:
             if not sys_name or sys_name.casefold() not in {s.casefold() for s in _as_list(val)}:
                 return False
         elif key == "text_regex":
-            text = e.geometry.get("text", "") if e.kind == "text" else ""
+            text = e.geometry.get("text", "")[:MAX_MATCH_TEXT] if e.kind == "text" else ""
             if not compile_regex(val).search(text):
                 return False
         else:

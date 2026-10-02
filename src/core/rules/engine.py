@@ -8,6 +8,7 @@ from typing import Callable, Sequence
 from core.geometry.measure import (
     entity_distance, max_off_axis, overlap_length, principal_angle, zone_relation,
 )
+from core.evidence.chunks import numbers_in
 from core.geometry.primitives import expand_bbox
 from core.models.entities import GeometryEntity
 from core.models.results import EvidenceChunk, RuleResult
@@ -34,6 +35,13 @@ class RuleContext:
 
     def __post_init__(self):
         self.pos = {id(e): i for i, e in enumerate(self.entities)}
+        # largest drawing dimension: search radius when a rule must consider every target
+        if self.entities:
+            minx = min(e.bbox[0] for e in self.entities); maxx = max(e.bbox[2] for e in self.entities)
+            miny = min(e.bbox[1] for e in self.entities); maxy = max(e.bbox[3] for e in self.entities)
+            self.extent = max(maxx - minx, maxy - miny)
+        else:
+            self.extent = 0.0
 
 
 def compare(v: float, op: str, ref: float) -> bool:
@@ -53,11 +61,17 @@ def compare(v: float, op: str, ref: float) -> bool:
 
 
 def fmt(v: float | None) -> str:
+    """Up to 2 decimals, trailing zeros dropped, so 299.96 is never shown as 300."""
     if v is None:
         return "—"
-    if abs(v - round(v)) < 0.05:
+    if abs(v - round(v)) < 0.005:
         return f"{round(v):d}"
-    return f"{v:.1f}"
+    return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def fmt_gap(gap: float) -> str:
+    """A positive shortfall, never rounded down to 0."""
+    return "<0.01" if 0 < gap < 0.005 else fmt(gap)
 
 
 def label(e: GeometryEntity) -> str:
@@ -149,7 +163,7 @@ class RuleEvaluator:
         if self.rule.get("fix_hint"):
             return self.rule["fix_hint"]
         if self.m in ("distance", "minimum_distance", "horizontal_clearance") and self.op in (">=", ">") and v is not None:
-            return f"將 {subj} 與 {tgt} 的間距增加至少 {fmt(self.value - v)} {self.unit}（移動或改道其中一條路徑）。"
+            return f"將 {subj} 與 {tgt} 的間距增加至少 {fmt_gap(self.value - v)} {self.unit}（移動或改道其中一條路徑）。"
         if self.m == "vertical_clearance":
             return "補充或確認兩者的安裝高程（Z 值），再判斷垂直淨距；必要時調整其中一者的高程。"
         if self.m == "intersection":
@@ -261,6 +275,10 @@ class RuleEvaluator:
         base = self.value + self.margin
         if self.op in (">=", ">", "==", "!="):
             return max(self.to_drawing_units(base) * 2.0, EPS)
+        if self.rule.get("quantifier", "all") == "all":
+            # "every target must be within X": targets farther than X are the violations,
+            # so the whole drawing has to be searched
+            return max(self.ctx.extent * 2.0, self.to_drawing_units(self.value) * 3.0, EPS)
         return max(self.to_drawing_units(self.value) * 3.0, EPS)
 
     def pair_value(self, s: GeometryEntity, t: GeometryEntity, cutoff: float):
@@ -298,13 +316,17 @@ class RuleEvaluator:
             return ("value", self.to_rule_units(ol), dr, "2D 邊界重疊長度")
         return None
 
-    def pair_message(self, status, s, t, v, unknown_reason="") -> str:
+    def pair_message(self, status, s, t, v, unknown_reason="", contained=False) -> str:
         S, T = label(s), (label(t) if t is not None else "")
         u = self.unit
         if status == "UNKNOWN":
             return f"{S} 與 {T} 的{self.mzh}無法判定。{unknown_reason}"
         if self.m == "intersection":
-            return (f"{S} 與 {T} 在平面上交叉。" if v and v >= 1 else f"{S} 與附近目標物件沒有交叉。")
+            if v and v >= 1:
+                if contained:
+                    return f"{S} 完全位於 {T} 的範圍內（平面上重疊，沒有穿越邊界）。"
+                return f"{S} 與 {T} 在平面上交叉。"
+            return f"{S} 與附近目標物件沒有交叉。"
         if v is None:
             return f"{S} 在搜尋範圍內找不到符合「{P.describe(self.rule['target'])}」的物件。"
         req = f"{self.op} {fmt(self.value)} {u}"
@@ -365,7 +387,8 @@ class RuleEvaluator:
         return out
 
     def _pair_result(self, status, s, t, v, dr, why) -> RuleResult:
-        msg = self.pair_message(status, s, t, v, why if status == "UNKNOWN" else "")
+        msg = self.pair_message(status, s, t, v, why if status == "UNKNOWN" else "",
+                                contained=bool(dr is not None and dr.contained))
         r = self.result(status, s, [t] if t is not None else [], v,
                         dr.midpoint if dr is not None else s.center(), msg,
                         why, {"closest_points": [list(dr.point_a), list(dr.point_b)] if dr else None})
@@ -419,8 +442,40 @@ class RuleEvaluator:
         return [r]
 
 
+NUMERIC_VALUE_MEASUREMENTS = {"distance", "minimum_distance", "horizontal_clearance", "vertical_clearance",
+                              "overlap", "length", "angle", "off_axis_angle"}
+
+
+def _value_candidates(rule: dict) -> list[float]:
+    """The rule value written in every unit a specification might use."""
+    v = float(rule["value"])
+    unit = rule.get("unit", "")
+    if unit in UNITS_TO_MM:
+        mm = v * UNITS_TO_MM[unit]
+        return [mm / f for f in UNITS_TO_MM.values()]
+    return [v]
+
+
+def evidence_number_problem(rule: dict, evidence: EvidenceChunk) -> str:
+    """Why the evidence text does not support the rule's numeric value ('' when it does or is not checkable)."""
+    if rule["measurement"] not in NUMERIC_VALUE_MEASUREMENTS:
+        return ""
+    ref = rule.get("evidence_ref") or {}
+    text = ref.get("quote") if ref.get("quote") else evidence.text
+    nums = numbers_in(text)
+    value, unit = rule["value"], rule.get("unit", "")
+    if not nums:
+        return f"規範證據文字沒有出現數值，無法佐證規則數值 {fmt(float(value))} {unit}"
+    cands = _value_candidates(rule)
+    if any(math.isclose(n, c, rel_tol=1e-9, abs_tol=1e-9) for n in nums for c in cands):
+        return ""
+    shown = "、".join(fmt(n) for n in nums[:4])
+    return f"規範證據中的數值（{shown}）與規則數值 {fmt(float(value))} {unit} 不一致"
+
+
 def apply_confidence(results: list[RuleResult], rule: dict, evidence: EvidenceChunk | None,
                      ctx: RuleContext) -> None:
+    mismatch = evidence_number_problem(rule, evidence) if evidence is not None else ""
     for r in results:
         reasons = []
         if evidence is not None:
@@ -431,6 +486,8 @@ def apply_confidence(results: list[RuleResult], rule: dict, evidence: EvidenceCh
         else:
             if evidence is None:
                 reasons.append("規則未連結到已匯入的規範證據")
+            elif mismatch:
+                reasons.append(mismatch)
             if ctx.units_assumed and r.measurement not in ("entity_count", "angle", "off_axis_angle",
                                                           "intersection", "inside_zone", "outside_zone"):
                 reasons.append("圖面未宣告單位（$INSUNITS），以 mm 推定")

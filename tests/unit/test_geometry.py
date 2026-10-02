@@ -122,3 +122,36 @@ def test_principal_and_off_axis(ef):
     assert max_off_axis(tilted) == pytest.approx(math.degrees(math.atan2(10, 100)))
     assert principal_angle(ef.circle("C", (0, 0), 5)) is None
     assert max_off_axis(ef.text("T", (0, 0), "x")) is None
+
+
+def _rim(c, r, n=4000):
+    return [(c[0] + r * math.cos(2 * math.pi * i / n), c[1] + r * math.sin(2 * math.pi * i / n)) for i in range(n)]
+
+
+def test_circle_segment_distance_matches_dense_sampling(ef):
+    """Exact circle/polyline distance agrees with a brute-force sample of the rim (property test)."""
+    rng = random.Random(99)
+    for _ in range(250):
+        c = (rng.uniform(-50, 50), rng.uniform(-50, 50))
+        r = rng.uniform(1, 40)
+        circle = ef.circle("C", c, r)
+        pts = [(rng.uniform(-120, 120), rng.uniform(-120, 120)) for _ in range(rng.choice([2, 3]))]
+        line = ef.line("L", *pts)
+        res = entity_distance(circle, line)
+        if res.contained:
+            continue
+        sample = min(G.point_segment_distance(q, a, b) for q in _rim(c, r)
+                     for a, b in line.segments())
+        assert res.distance <= sample + 1e-9
+        assert res.distance >= sample - 2 * math.pi * r / 4000 - 1e-9
+        # reported closest points realise the distance
+        assert math.dist(res.point_a, res.point_b) == pytest.approx(res.distance, abs=1e-6)
+
+
+def test_circle_circle_distance_cases(ef):
+    a = ef.circle("A", (0, 0), 10)
+    assert entity_distance(a, ef.circle("B", (30, 0), 5)).distance == pytest.approx(15.0)
+    assert entity_distance(a, ef.circle("B", (12, 0), 5)).distance == 0.0           # overlapping rims
+    inner = entity_distance(a, ef.circle("B", (1, 0), 3))
+    assert inner.contained and inner.distance == 0.0
+    assert entity_distance(ef.circle("B", (1, 0), 3), a).contained

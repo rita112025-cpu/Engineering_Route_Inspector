@@ -87,15 +87,20 @@ def normalize_rule(raw: dict[str, Any]) -> dict[str, Any]:
     label = rid or "(未命名)"
     if not isinstance(rid, str) or not RULE_ID_RE.match(rid):
         errs.append(f"{label}: 規則 ID 只能包含英數字、-、_、.，且不可為空")
-    if not isinstance(r.get("name"), str) or not r.get("name", "").strip():
-        r["name"] = rid or ""
-    sev = str(r.get("severity", "FAIL")).upper()
+    name = r.get("name")
+    if name is not None and not isinstance(name, str):
+        errs.append(f"{label}: 名稱必須是文字")
+    if not isinstance(name, str) or not name.strip():
+        r["name"] = rid if isinstance(rid, str) else ""
+    sev_raw = r.get("severity", "FAIL")
+    sev = sev_raw.upper() if isinstance(sev_raw, str) else None
     if sev not in SEVERITIES:
         errs.append(f"{label}: 嚴重度只能是 FAIL 或 WARNING")
     r["severity"] = sev
     m = r.get("measurement")
-    if m not in MEASUREMENTS:
+    if not isinstance(m, str) or m not in MEASUREMENTS:
         errs.append(f"{label}: 不支援的檢查方式 {m!r}")
+        m = None                      # later checks only look at a valid measurement
     if m in ("inside_zone", "outside_zone"):
         r.setdefault("operator", "==")
         r.setdefault("value", 1)
@@ -103,12 +108,17 @@ def normalize_rule(raw: dict[str, Any]) -> dict[str, Any]:
         r.setdefault("operator", "==")
         r.setdefault("value", 0)
     op = r.get("operator")
-    if op not in OPERATORS:
+    if not isinstance(op, str) or op not in OPERATORS:
         errs.append(f"{label}: 不支援的比較運算子 {op!r}")
     val = r.get("value")
     if isinstance(val, bool) or not isinstance(val, (int, float)):
         errs.append(f"{label}: 數值必須是數字")
-    unit = r.get("unit") or default_unit(m or "")
+    unit = r.get("unit")
+    if unit is None or unit == "":
+        unit = default_unit(m or "")
+    elif not isinstance(unit, str):
+        errs.append(f"{label}: 單位必須是文字")
+        unit = default_unit(m or "")
     r["unit"] = unit
     if m in (PAIR_MEASUREMENTS - {"intersection"}) | {"length"}:
         if unit not in UNITS_TO_MM:
@@ -142,8 +152,10 @@ def normalize_rule(raw: dict[str, Any]) -> dict[str, Any]:
     if ref is not None:
         if not isinstance(ref, dict) or not isinstance(ref.get("quote", ""), str):
             errs.append(f"{label}: evidence_ref 格式錯誤")
-    q = r.get("quantifier") or default_quantifier(r)
-    if q not in ("all", "any"):
+    q = r.get("quantifier")
+    if q is None:
+        q = default_quantifier(r) if not errs else "all"
+    if not isinstance(q, str) or q not in ("all", "any"):
         errs.append(f"{label}: quantifier 只能是 all 或 any")
     r["quantifier"] = q
     r["enabled"] = bool(r.get("enabled", True))
