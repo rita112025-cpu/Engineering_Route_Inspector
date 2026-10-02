@@ -37,7 +37,7 @@ def test_u81a_scrubber_hides_whole_names_with_spaces_and_quotes(tmp_path):
         assert "secret" not in out and "ZZ" not in out and "plan.dxf" not in out, out
     # a name that is no longer in the database: the pattern still stops at the extension, not at the first space
     out = diagnostics.scrubber(tmp_path / "data")(f"x {root}/documents/old secret notes.docx failed")
-    assert "secret" not in out and "notes.docx" not in out and out.endswith("failed"), out
+    assert "secret" not in out and "notes.docx" not in out, out        # hidden to the end of the line (R11)
 
 
 def test_u81a_bundle_has_no_part_of_a_stored_file_name(live, sample_dxf):

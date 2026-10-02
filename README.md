@@ -151,7 +151,7 @@ python scripts/benchmark_geometry.py                  # 效能基準
 
 | 項目 | 結果 |
 |---|---|
-| `pytest -W error` | 463 passed（單元 108、整合 121、回歸 115、安全 102、效能 8、瀏覽器 9） |
+| `pytest -W error` | 490 passed（單元 108、整合 148、回歸 115、安全 102、效能 8、瀏覽器 9） |
 | 瀏覽器測試 | 以 Playwright 操作無頭 Chromium 的自動化測試通過（載入示範專案、分析、點紅色問題、匯出、診斷視窗等） |
 | `start-ui.sh`（Linux 版啟動腳本） | 在乾淨副本實際執行：建立 `.venv`、安裝套件、啟動，首頁回 200、`/api/health` 正常、錯誤的 Host 標頭回 403 |
 | `start-ui.bat` | **尚未在 Windows 實際執行**（測試環境沒有 Windows）；只做了靜態檢查（CRLF、僅 ASCII、`goto` 標籤齊全、無網路／刪除指令、不覆寫主機位址） |

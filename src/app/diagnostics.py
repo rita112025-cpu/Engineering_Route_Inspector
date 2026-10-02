@@ -32,24 +32,59 @@ MIN_FREE_MB = 200
 LOG_TAIL_LINES = 120
 BUNDLE_LOG_BYTES = 400_000
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_EXT = r"(?:dxf|pdf|docx|txt|md|csv|html?|zip)"
-# 'drawings/<anything up to the first known extension>' (names may hold spaces and quotes), else up to a delimiter
-_FILE_IN_STORAGE = re.compile(
-    rf"(?P<d>drawings|documents|exports)[\\/](?:[^\r\n\"<>|]*?\.{_EXT}\b|[^\s'\"<>|]+)", re.I)
-# the last line of a traceback, 'Class: message' (module-qualified or not), and 'Class(...)' reprs
-_EXC_NAME = r"[A-Za-z_][\w.]*?(?:[Ee]rror|Exception|Warning|Exit|Interrupt|Failure|Timeout|Fault)"
-_EXC_LINE = re.compile(rf"^(?P<pre>\s*)(?P<cls>{_EXC_NAME})(?::.*)?$", re.M)
-_EXC_REPR = re.compile(rf"\b(?P<cls>{_EXC_NAME})\((?:.*)\)")
+# unknown name after a storage folder (the database no longer knows it): hide to the end of the line, because
+# names can hold spaces, quotes and anything else. 'drawings/<file>' (already replaced) is left alone.
+_FILE_IN_STORAGE = re.compile(r"(?P<d>drawings|documents|exports)[\\/](?!<file>)[^\r\n]*", re.I)
+# '<Class>:' inside a line, possibly module-qualified and possibly after a prefix ('worker said: ValueError: ...')
+_COLON_NAME = re.compile(r"(?<![\w.])((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*)\s*:")
+_EXC_SUFFIX = re.compile(r"(?:[Ee]rror|Exception|Warning|Exit|Interrupt|Failure|Timeout|Fault)$")
+_EXC_KNOWN = {"StopIteration", "StopAsyncIteration", "BadZipFile", "Cancelled", "UploadTooLarge", "RunGone",
+              "RunInProgress", "KeyboardInterrupt", "SystemExit", "GeneratorExit"}
+_EXC_REPR = re.compile(r"\b(?P<cls>[A-Za-z_][\w.]*?(?:[Ee]rror|Exception))\((?:.*)\)")
+# a line that starts something new: ends the (possibly multi-line) message of the exception before it
+_RECORD_START = re.compile(r"^(?:\s*$|\d{4}-\d\d-\d\d|Traceback|\s*File \"|During handling|The above exception)")
 OMITTED = "<內容已省略>"
 # messages the program writes itself (fixed wording plus stage position / numbers): safe to export as text
 FIXED_MESSAGE_CODES = {"WORKER_START_FAILED", "WORKER_CRASHED", "WORKER_STALLED", "WORKER_NO_PROGRESS", "WORKER_LOST",
                        "RUN_TIMEOUT", "INTERRUPTED", "OUT_OF_MEMORY", "CANCELLED"}
 
 
+def _is_exception_name(name: str) -> bool:
+    last = name.rsplit(".", 1)[-1]
+    if _EXC_SUFFIX.search(last) or last in _EXC_KNOWN:
+        return True
+    return "." in name and last[:1].isupper()           # module.Class
+
+
+def _redact_line(line: str) -> tuple[str, bool]:
+    for m in _COLON_NAME.finditer(line):
+        if _is_exception_name(m.group(1)):
+            return f"{line[:m.end()]} {OMITTED}", True
+    return _EXC_REPR.sub(lambda m: f"{m.group('cls')}({OMITTED})", line), False
+
+
 def redact_exceptions(text: str) -> str:
-    """Keep the exception class, drop its message (it may quote drawing content or a rule pattern)."""
-    text = _EXC_LINE.sub(lambda m: f"{m.group('pre')}{m.group('cls')}: {OMITTED}", text)
-    return _EXC_REPR.sub(lambda m: f"{m.group('cls')}({OMITTED})", text)
+    """Keep the exception class, drop its message (it may quote drawing content or a rule pattern).
+
+    The message can run over several lines; those lines are dropped until the next record or traceback frame.
+    """
+    out: list[str] = []
+    in_message = False
+    for line in text.split("\n"):
+        if in_message and not _RECORD_START.match(line) and not any(
+                _is_exception_name(m.group(1)) for m in _COLON_NAME.finditer(line)):
+            continue
+        in_message = False
+        redacted, in_message = _redact_line(line)
+        out.append(redacted)
+    return "\n".join(out)
+
+
+def _open_ro(db_file: Path) -> sqlite3.Connection:
+    """Read-only connection; the path is URI-quoted so '#', '?' and '%' in a folder name are not special."""
+    conn = sqlite3.connect(Path(db_file).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def known_names(conn: sqlite3.Connection | None) -> set[str]:
@@ -94,7 +129,7 @@ def scrubber_for(data_dir: Path, conn: sqlite3.Connection | None = None):
     db_file = Path(data_dir) / "eri.sqlite3"
     if conn is None and db_file.is_file():
         try:
-            own = conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=5)
+            own = conn = _open_ro(db_file)
         except sqlite3.Error:
             conn = None
     try:
@@ -108,7 +143,8 @@ def safe_run_message(code: str | None, message: str | None, scrub) -> str:
     """Free text only for the program's own fixed messages; otherwise the exception class alone."""
     message = message or ""
     if code in FIXED_MESSAGE_CODES:
-        return scrub(message)
+        # runs recorded by an older version named the rule: 「執行規則：<id>」 -> 「執行規則」
+        return re.sub(r"(執行規則)：[^」（]*", r"\1", scrub(message))
     m = re.match(r"分析過程發生錯誤：([\w.]+)", message)
     return f"分析過程發生錯誤：{m.group(1)}（{OMITTED}）" if m else OMITTED
 
@@ -176,7 +212,7 @@ def collect(data_dir: Path, *, conn: sqlite3.Connection | None = None, manager_s
     db_file = data_dir / "eri.sqlite3"
     own = None
     if conn is None and db_file.is_file():
-        own = conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=5)
+        own = conn = _open_ro(db_file)
         conn.row_factory = sqlite3.Row
     if conn is not None:
         try:

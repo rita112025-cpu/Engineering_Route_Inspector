@@ -200,7 +200,7 @@ class _Builder:
             t = e.dxftype()
             handle = e.dxf.handle or "?"
             hp = f"{prefix}>{handle}" if prefix else handle
-            layer = e.dxf.layer
+            layer = e.dxf.get("layer", "0") if t in SUPPORTED else "0"   # unknown entity types have no layer attribute
             if parent_layer is not None and layer == "0":
                 layer = parent_layer
             if t == "INSERT":

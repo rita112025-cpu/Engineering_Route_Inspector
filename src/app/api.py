@@ -218,15 +218,15 @@ def _import_drawing(st: AppState, pid: str, filename: str, fileobj) -> dict:
             raise bad_request("這是 DWG 檔（副檔名被改成 .dxf）。請在 CAD 軟體中另存為 DXF。", "DWG_UNSUPPORTED")
     try:
         imp = load_dxf(stored.path, name)
-    except DrawingImportError:
-        stored.path.unlink(missing_ok=True)
+        counts = Counter(e.layer for e in imp.entities)
+        info = {"layers": [{"name": k, "count": counts[k]} for k in sorted(counts)], "type_counts": imp.type_counts,
+                "skipped": imp.skipped, "warnings": imp.warnings, "dxf_version": imp.dxf_version,
+                "parse_seconds": round(imp.parse_seconds, 3), "units_code": imp.units_code}
+        return repo.add_drawing(pid, name, stored.stored_name, stored.sha256, stored.size, imp.entities,
+                                unit_to_mm=imp.unit_to_mm, units_assumed=imp.units_assumed, info=info)
+    except BaseException:
+        stored.path.unlink(missing_ok=True)         # whatever went wrong, do not leave a file nobody refers to
         raise
-    counts = Counter(e.layer for e in imp.entities)
-    info = {"layers": [{"name": k, "count": counts[k]} for k in sorted(counts)], "type_counts": imp.type_counts,
-            "skipped": imp.skipped, "warnings": imp.warnings, "dxf_version": imp.dxf_version,
-            "parse_seconds": round(imp.parse_seconds, 3), "units_code": imp.units_code}
-    return repo.add_drawing(pid, name, stored.stored_name, stored.sha256, stored.size, imp.entities,
-                            unit_to_mm=imp.unit_to_mm, units_assumed=imp.units_assumed, info=info)
 
 
 async def upload_drawing(request: Request):

@@ -42,6 +42,7 @@ set "PYTHONPATH=%~dp0src"
 "%VPY%" -m app %*
 set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" goto done
+if /i "%~1"=="--diagnose" goto done_rc
 echo.
 echo The program stopped with error code %RC%. Running the self-check:
 echo.
@@ -73,6 +74,9 @@ echo Package installation failed. Check the internet connection (or proxy settin
 echo Nothing from your projects was sent anywhere.
 pause
 exit /b 1
+
+:done_rc
+exit /b %RC%
 
 :done
 exit /b 0

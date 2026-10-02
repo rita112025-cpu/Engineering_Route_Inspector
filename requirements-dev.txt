@@ -1,5 +1,8 @@
+# Tools for running the tests (tests/): pytest, and httpx as the HTTP client of the integration tests.
+pytest>=8,<10
+httpx>=0.27,<1
 -r requirements.txt
 # Browser tests (tests/browser) drive a real headless Chromium. Optional: without Playwright or a
 # Chromium build those tests are skipped. Install a browser with `playwright install chromium`, or
 # point ERI_CHROMIUM at an existing Chrome/Chromium executable.
-playwright>=1.40
+playwright>=1.40,<2

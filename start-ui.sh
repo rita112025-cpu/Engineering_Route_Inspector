@@ -37,7 +37,7 @@ echo "[3/3] Starting. Press Ctrl+C to stop."
 export PYTHONPATH="$ROOT/src"
 "$VPY" -m app "$@"
 rc=$?
-if [ "$rc" -ne 0 ]; then
+if [ "$rc" -ne 0 ] && [ "${1:-}" != "--diagnose" ]; then
   echo
   echo "The program stopped with error code $rc. Running the self-check:"
   echo

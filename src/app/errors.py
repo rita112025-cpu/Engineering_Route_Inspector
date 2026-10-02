@@ -73,10 +73,19 @@ async def known_error_handler(request: Request, exc: Exception):
     return await unexpected_error_handler(request, exc)
 
 
+def tail_lines(text: str, limit: int) -> str:
+    """The last ``limit`` characters, starting at a line boundary (never in the middle of a class name)."""
+    if len(text) <= limit:
+        return text
+    cut = text[-limit:]
+    nl = cut.find("\n")
+    return cut[nl + 1:] if nl != -1 else cut
+
+
 async def unexpected_error_handler(request: Request, exc: Exception):
     """Never leak a traceback to the browser; keep it in the server log for diagnostics."""
     log.error("unhandled %s on %s %s\n%s", type(exc).__name__, request.method, clean_log(request.url.path),
-              "".join(traceback.format_exception(exc))[-3000:])
+              tail_lines("".join(traceback.format_exception(exc)), 3000))
     return payload(500, "INTERNAL_ERROR", "程式發生未預期的錯誤。細節已寫入記錄檔，請在診斷頁面匯出診斷資料。")
 
 
