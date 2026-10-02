@@ -62,10 +62,12 @@ class SecurityMiddleware:
         if origin is not None and origin.lower() not in self.config.allowed_origins:
             return await send_error(send, 403, "BAD_ORIGIN", "不允許的來源網頁。")
         path = scope["path"]
-        if path.startswith("/api/") and scope["method"] not in SAFE_METHODS:
+        if path.startswith("/api/"):
+            # reads too: another web page must not be able to trigger a download (the diagnostics ZIP, an export)
             site = headers.get("sec-fetch-site")
             if site is not None and site not in ("same-origin", "none"):
                 return await send_error(send, 403, "BAD_ORIGIN", "不允許跨網站的請求。")
+        if path.startswith("/api/") and scope["method"] not in SAFE_METHODS:
             if not hmac.compare_digest(headers.get(TOKEN_HEADER, "").encode(), self.token.encode()):
                 return await send_error(send, 403, "BAD_TOKEN", "缺少或錯誤的安全權杖，請重新整理頁面。")
 

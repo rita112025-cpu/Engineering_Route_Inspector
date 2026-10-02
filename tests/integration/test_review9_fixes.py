@@ -77,7 +77,7 @@ def test_d3_prune_logs_removes_old_heartbeat_files_of_finished_runs_only(env, ru
         m.stop()
 
 
-def test_d5_no_progress_message_names_the_stage_and_rule(env, running):
+def test_d5_no_progress_message_names_the_stage_and_position(env, running):
     from datetime import datetime, timedelta, timezone
     env.conn.execute("UPDATE runs SET heartbeat_at = ?, stage = 'rules', stage_note = ? WHERE id = ?",
                      ((datetime.now(timezone.utc) - timedelta(seconds=45)).isoformat(), "CLEARANCE（第 1/3 條）", running["id"]))
@@ -86,7 +86,7 @@ def test_d5_no_progress_message_names_the_stage_and_rule(env, running):
     try:
         m._enforce_cancel()
         msg = env.repo.get_run(running["id"])["error_message"]
-        assert "CLEARANCE" in msg and "沒有任何進度" in msg and "30 秒" in msg, msg
+        assert "第 1/3 條" in msg and "沒有任何進度" in msg and "30 秒" in msg, msg   # position, not the rule id (U8-1 c)
     finally:
         m.tracked.clear()
         m.stop()

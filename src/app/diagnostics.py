@@ -1,9 +1,13 @@
 """Diagnostics: what is wrong, in words, and a bundle a person can send when asking for help.
 
-Privacy: nothing about the *content* of a project leaves this module. No drawing, specification or rule text,
-no file names, no absolute paths (the data folder, the home folder and the program folder are replaced by
-placeholders in everything that is exported). The bundle is a ZIP the user downloads and decides about; the
-program never sends it anywhere.
+Privacy: what is exported is built so that nothing from the *content* of a project is in it: no drawing,
+specification or rule text, no file names, no absolute paths. Mechanisms (each has a test):
+  * every file name the database knows (and the pattern ``drawings/<name>.<ext>`` for ones it no longer knows)
+    is replaced by ``<file>``; the data, program and home folders by ``<data>``, ``<app>``, ``<home>``;
+  * the message of an exception (which can quote file content or a rule pattern) is dropped from logs and failed
+    runs: only its class is kept;
+  * failure messages are free text only for the fixed messages the program itself writes.
+The bundle is a ZIP the user downloads and decides about; the program never sends it anywhere.
 """
 from __future__ import annotations
 
@@ -28,11 +32,44 @@ MIN_FREE_MB = 200
 LOG_TAIL_LINES = 120
 BUNDLE_LOG_BYTES = 400_000
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_FILE_IN_STORAGE = re.compile(r"(drawings|documents|exports)[\\/][^\s'\"<>|]+")
+_EXT = r"(?:dxf|pdf|docx|txt|md|csv|html?|zip)"
+# 'drawings/<anything up to the first known extension>' (names may hold spaces and quotes), else up to a delimiter
+_FILE_IN_STORAGE = re.compile(
+    rf"(?P<d>drawings|documents|exports)[\\/](?:[^\r\n\"<>|]*?\.{_EXT}\b|[^\s'\"<>|]+)", re.I)
+# the last line of a traceback, 'Class: message' (module-qualified or not), and 'Class(...)' reprs
+_EXC_NAME = r"[A-Za-z_][\w.]*?(?:[Ee]rror|Exception|Warning|Exit|Interrupt|Failure|Timeout|Fault)"
+_EXC_LINE = re.compile(rf"^(?P<pre>\s*)(?P<cls>{_EXC_NAME})(?::.*)?$", re.M)
+_EXC_REPR = re.compile(rf"\b(?P<cls>{_EXC_NAME})\((?:.*)\)")
+OMITTED = "<內容已省略>"
+# messages the program writes itself (fixed wording plus stage position / numbers): safe to export as text
+FIXED_MESSAGE_CODES = {"WORKER_START_FAILED", "WORKER_CRASHED", "WORKER_STALLED", "WORKER_NO_PROGRESS", "WORKER_LOST",
+                       "RUN_TIMEOUT", "INTERRUPTED", "OUT_OF_MEMORY", "CANCELLED"}
 
 
-def scrubber(data_dir: Path):
-    """A function that hides absolute paths and stored file names in text."""
+def redact_exceptions(text: str) -> str:
+    """Keep the exception class, drop its message (it may quote drawing content or a rule pattern)."""
+    text = _EXC_LINE.sub(lambda m: f"{m.group('pre')}{m.group('cls')}: {OMITTED}", text)
+    return _EXC_REPR.sub(lambda m: f"{m.group('cls')}({OMITTED})", text)
+
+
+def known_names(conn: sqlite3.Connection | None) -> set[str]:
+    """Every file name the database has: original and stored names of drawings and documents, export files."""
+    names: set[str] = set()
+    if conn is None:
+        return names
+    try:
+        for sql in ("SELECT logical_name, stored_name FROM drawings", "SELECT filename, stored_name FROM documents"):
+            for row in conn.execute(sql):
+                names.update(x for x in row if x)
+        for (path,) in conn.execute("SELECT path FROM exports"):
+            names.add(Path(path).name)
+    except sqlite3.Error:
+        pass
+    return names
+
+
+def scrubber(data_dir: Path, names=()):
+    """A function that hides absolute paths, known file names and stored file names in text."""
     roots = {str(data_dir.resolve()): "<data>", str(REPO_ROOT): "<app>", str(Path.home()): "<home>"}
     variants = {}
     for k, v in roots.items():
@@ -40,13 +77,40 @@ def scrubber(data_dir: Path):
         variants[k.replace("\\", "/")] = v
         variants[k.replace("/", "\\")] = v
     ordered = sorted(variants, key=len, reverse=True)
+    file_names = sorted({n for n in names if n and len(n) >= 3}, key=len, reverse=True)
 
     def scrub(text: str) -> str:
         for k in ordered:
             if k:
                 text = text.replace(k, variants[k])
-        return _FILE_IN_STORAGE.sub(lambda m: f"{m.group(1)}/<file>", text)
+        for n in file_names:
+            text = text.replace(n, "<file>")
+        return _FILE_IN_STORAGE.sub(lambda m: f"{m.group('d')}/<file>", text)
     return scrub
+
+
+def scrubber_for(data_dir: Path, conn: sqlite3.Connection | None = None):
+    own = None
+    db_file = Path(data_dir) / "eri.sqlite3"
+    if conn is None and db_file.is_file():
+        try:
+            own = conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=5)
+        except sqlite3.Error:
+            conn = None
+    try:
+        return scrubber(Path(data_dir), known_names(conn))
+    finally:
+        if own is not None:
+            own.close()
+
+
+def safe_run_message(code: str | None, message: str | None, scrub) -> str:
+    """Free text only for the program's own fixed messages; otherwise the exception class alone."""
+    message = message or ""
+    if code in FIXED_MESSAGE_CODES:
+        return scrub(message)
+    m = re.match(r"分析過程發生錯誤：([\w.]+)", message)
+    return f"分析過程發生錯誤：{m.group(1)}（{OMITTED}）" if m else OMITTED
 
 
 def _check(name: str, ok: bool, detail: str = "") -> dict:
@@ -75,10 +139,13 @@ def _packages() -> dict[str, str | None]:
 
 
 def collect(data_dir: Path, *, conn: sqlite3.Connection | None = None, manager_status: dict | None = None,
-            recovery: dict | None = None, started_at: float | None = None) -> dict:
-    """Facts and health checks. ``conn`` is optional so the offline command works on a folder with no server."""
+            recovery: dict | None = None, started_at: float | None = None, deep: bool = False) -> dict:
+    """Facts and health checks. ``conn`` is optional so the offline command works on a folder with no server.
+
+    ``deep`` runs the full SQLite integrity check (slow on a big database, so the dialog uses the quick check).
+    """
     data_dir = Path(data_dir)
-    scrub = scrubber(data_dir)
+    scrub = scrubber_for(data_dir, conn)
     checks: list[dict] = []
     info: dict = {
         "software_version": SOFTWARE_VERSION, "python": platform.python_version(), "platform": platform.platform(),
@@ -99,7 +166,7 @@ def collect(data_dir: Path, *, conn: sqlite3.Connection | None = None, manager_s
             writable = True
         except OSError as exc:
             writable = False
-            info["write_error"] = scrub(str(exc))
+            info["write_error"] = scrub(redact_exceptions(f"{type(exc).__name__}: {exc}"))
         checks.append(_check("資料資料夾可以寫入", writable))
         free = shutil.disk_usage(data_dir).free / 1024 / 1024
         info["disk_free_mb"] = round(free)
@@ -113,17 +180,19 @@ def collect(data_dir: Path, *, conn: sqlite3.Connection | None = None, manager_s
         conn.row_factory = sqlite3.Row
     if conn is not None:
         try:
-            integrity = [r[0] for r in conn.execute("PRAGMA integrity_check")]
+            pragma, kind = ("integrity_check", "完整檢查") if deep else ("quick_check", "快速檢查")
+            integrity = [r[0] for r in conn.execute(f"PRAGMA {pragma}")]
             fk = conn.execute("PRAGMA foreign_key_check").fetchall()
-            checks.append(_check("資料庫完整性", integrity == ["ok"], "ok" if integrity == ["ok"] else "; ".join(integrity[:3])))
+            checks.append(_check("資料庫完整性", integrity == ["ok"],
+                                 f"{kind}：ok" if integrity == ["ok"] else f"{kind}：" + "; ".join(integrity[:3])))
             checks.append(_check("資料庫關聯一致", not fk, "" if not fk else f"{len(fk)} 筆關聯遺失"))
             info["schema_version"] = schema_version(conn)
             info["counts"] = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                               for t in ("projects", "drawings", "documents", "rules", "runs", "issues", "exports")}
             info["runs_by_status"] = {r[0]: r[1] for r in conn.execute("SELECT status, COUNT(*) FROM runs GROUP BY status")}
             info["recent_failed_runs"] = [
-                {"run": r["id"], "status": r["status"], "code": r["error_code"], "message": scrub(r["error_message"] or ""),
-                 "created_at": r["created_at"]}
+                {"run": r["id"], "status": r["status"], "code": r["error_code"],
+                 "message": safe_run_message(r["error_code"], r["error_message"], scrub), "created_at": r["created_at"]}
                 for r in conn.execute("SELECT id, status, error_code, error_message, created_at FROM runs "
                                       "WHERE status = 'failed' ORDER BY created_at DESC LIMIT 10")]
             info["recent_activity"] = [{"ts": r["ts"], "operation": r["operation"], "result": r["result"]}
@@ -133,7 +202,7 @@ def collect(data_dir: Path, *, conn: sqlite3.Connection | None = None, manager_s
                 checks.append(_check("背景分析程式運作中", manager_status.get("alive", False)))
             info["active_runs"] = stuck
         except sqlite3.Error as exc:
-            checks.append(_check("資料庫可以讀取", False, scrub(str(exc))))
+            checks.append(_check("資料庫可以讀取", False, type(exc).__name__))
         finally:
             if own is not None:
                 own.close()
@@ -141,7 +210,7 @@ def collect(data_dir: Path, *, conn: sqlite3.Connection | None = None, manager_s
         checks.append(_check("資料庫存在", False, "找不到 eri.sqlite3（還沒有任何資料）"))
     if manager_status is not None:
         info["jobs"] = {"max_workers": manager_status.get("max_workers"), "running": manager_status.get("running"),
-                        "recent_events": [dict(e, detail=scrub(str(e.get("detail", "")))) for e in manager_status.get("recent_events", [])]}
+                        "recent_events": [dict(e, detail=scrub(redact_exceptions(str(e.get("detail", ""))))) for e in manager_status.get("recent_events", [])]}
     if recovery is not None:
         info["startup_recovery"] = recovery
     info["checks"] = checks
@@ -150,31 +219,38 @@ def collect(data_dir: Path, *, conn: sqlite3.Connection | None = None, manager_s
     return info
 
 
+def clean_log_text(text: str, scrub) -> str:
+    return scrub(redact_exceptions(text))
+
+
 def log_tail(data_dir: Path, scrub=None, lines: int = LOG_TAIL_LINES) -> list[str]:
-    scrub = scrub or scrubber(data_dir)
+    scrub = scrub or scrubber_for(data_dir)
     f = data_dir / "logs" / "server.log"
     if not f.is_file():
         return []
-    data = f.read_bytes()[-200_000:].decode("utf-8", errors="replace").splitlines()
-    return [scrub(x) for x in data[-lines:]]
+    data = f.read_bytes()[-200_000:].decode("utf-8", errors="replace")
+    return clean_log_text(data, scrub).splitlines()[-lines:]
 
 
-def build_bundle(data_dir: Path, info: dict) -> bytes:
+def build_bundle(data_dir: Path, info: dict, conn: sqlite3.Connection | None = None) -> bytes:
     """ZIP: diagnostics.json, the scrubbed server log and the newest worker logs, plus a note on what is inside."""
-    scrub = scrubber(data_dir)
+    scrub = scrubber_for(data_dir, conn)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.txt", "這是「工程管線檢查」的診斷資料。\n"
                    "內容：版本與環境、健康檢查結果、資料庫統計、近期失敗的分析、程式記錄檔。\n"
-                   "不包含：圖面、規範、規則的內容與檔名。路徑已用 <data>、<app>、<home> 取代。\n"
+                   "不包含：圖面、規範、規則的內容與檔名。路徑已用 <data>、<app>、<home> 取代，"
+                   "檔名以 <file> 取代，例外訊息只保留例外的類別。\n"
                    "本程式不會自動傳送這個檔案；要不要提供給別人，由你決定。\n")
         z.writestr("diagnostics.json", json.dumps(info, ensure_ascii=False, indent=2))
         logs = data_dir / "logs"
         if logs.is_dir():
             server = logs / "server.log"
             if server.is_file():
-                z.writestr("server.log", scrub(server.read_bytes()[-BUNDLE_LOG_BYTES:].decode("utf-8", errors="replace")))
+                text = server.read_bytes()[-BUNDLE_LOG_BYTES:].decode("utf-8", errors="replace")
+                z.writestr("server.log", clean_log_text(text, scrub))
             runs = sorted(logs.glob("run_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]
             for p in runs:
-                z.writestr(f"worker-logs/{p.name}", scrub(p.read_bytes()[-200_000:].decode("utf-8", errors="replace")))
+                text = p.read_bytes()[-200_000:].decode("utf-8", errors="replace")
+                z.writestr(f"worker-logs/{p.name}", clean_log_text(text, scrub))
     return buf.getvalue()

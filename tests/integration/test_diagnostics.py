@@ -69,7 +69,7 @@ def test_failed_run_message_is_scrubbed(live, sample_dxf):
     did = live.http.post(f"/api/projects/{pid}/drawings", files={"file": ("plan.dxf", sample_dxf.read_bytes())}).json()["id"]
     repo = st.repo()
     run = repo.create_run(pid, repo.get_drawing(did), repo.get_ruleset(pid), None)
-    repo.finish_run(run["id"], "failed", error_code="ANALYSIS_ERROR",
+    repo.finish_run(run["id"], "failed", error_code="WORKER_CRASHED",
                     error_message=f"cannot read {root}/drawings/s_secret.dxf")
     d = live.http.get("/api/diagnostics").json()
     msg = d["recent_failed_runs"][0]["message"]

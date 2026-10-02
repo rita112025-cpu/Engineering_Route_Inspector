@@ -42,6 +42,13 @@ def payload(status: int, code: str, message: str, **extra) -> JSONResponse:
     return JSONResponse({"error": {"code": code, "message": message, **extra}}, status_code=status)
 
 
+def _detail_class(detail: str | None) -> str:
+    """Only the exception class of an import failure's technical detail ('DXFStructureError(...)' -> its name).
+    The text after it can quote the drawing's content, so it is not written to the log."""
+    m = re.match(r"[A-Za-z_][\w.]*", detail or "")
+    return clean_log(m.group(0)) if m else "(no detail)"
+
+
 async def api_error_handler(request: Request, exc: ApiError):
     return payload(exc.status, exc.code, exc.message, **exc.extra)
 
@@ -52,10 +59,10 @@ async def known_error_handler(request: Request, exc: Exception):
     if isinstance(exc, RuleError):
         return payload(400, "RULES_INVALID", f"規則有 {len(exc.errors)} 個問題，請修正後再儲存。", errors=exc.errors)
     if isinstance(exc, DrawingImportError):
-        log.info("drawing import failed: %s", clean_log(exc.detail))        # detail may hold file paths: log only
+        log.info("drawing import failed: %s", _detail_class(exc.detail))   # the message may quote the file's content
         return payload(400, "DRAWING_UNREADABLE", f"{exc.user_message}：{exc.reason}")
     if isinstance(exc, DocumentImportError):
-        log.info("document import failed: %s", clean_log(exc.detail))
+        log.info("document import failed: %s", _detail_class(exc.detail))
         return payload(400, "DOCUMENT_UNREADABLE", f"{exc.user_message}：{exc.reason}")
     if isinstance(exc, ExportError):
         return payload(409, "EXPORT_FAILED", exc.message)

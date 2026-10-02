@@ -210,7 +210,7 @@ const startRun = guard(async () => {
 
 function showProgress(run) {
   $("#progress").value = Math.round((run.progress ?? 0) * 100);
-  const note = run.stage_note ? `（${run.stage_note}）` : "";
+  const note = run.stage_note ? `：${run.stage_note}` : "";
   $("#progress-label").textContent = run.status === "queued" ? "排隊中…" : `${run.stage_label}${note} ${Math.round((run.progress ?? 0) * 100)}%`;
 }
 

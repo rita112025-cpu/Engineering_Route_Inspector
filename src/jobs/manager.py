@@ -13,6 +13,7 @@ Crash recovery covers three cases:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -276,11 +277,18 @@ class JobManager:
                 self._drop_heartbeat(rid)
 
     def _where(self, rid: str) -> str:
-        """'分析規則：CLEARANCE（第 1/3 條）' - the stage (and rule) a run was in, for messages."""
+        """'執行規則（第 2/5 條）' - the stage a run was in, for messages that are stored and exported.
+
+        The rule's own id is left out: it is the user's text, and these messages end up in diagnostics.
+        """
         run = self.repo.get_run(rid) or {}
-        label = dict(STAGES).get(run.get("stage"), run.get("stage") or "")
-        note = f"：{run['stage_note']}" if run.get("stage_note") else ""
-        return f"{label}{note}"
+        stage = run.get("stage")
+        label = dict(STAGES).get(stage, stage or "")
+        note = run.get("stage_note") or ""
+        if stage == "rules":
+            pos = re.search(r"（第 (\d+)/(\d+) 條）$", note)
+            return f"{label}（第 {pos.group(1)}/{pos.group(2)} 條）" if pos else label
+        return f"{label}：{note}" if note else label
 
     def _stall_message(self, rid: str) -> str:
         stage = (self.repo.get_run(rid) or {}).get("stage")

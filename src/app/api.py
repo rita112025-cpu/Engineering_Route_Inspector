@@ -134,7 +134,7 @@ def get_diagnostics(request: Request):
 
 def diagnostics_bundle(request: Request):
     st = S(request)
-    data = diagnostics.build_bundle(st.config.data_dir, _diagnose(request))
+    data = diagnostics.build_bundle(st.config.data_dir, _diagnose(request), st.db.conn())
     name = f"eri-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     return Response(data, media_type="application/zip", headers={"Content-Disposition": _attachment(name)})
 

@@ -284,7 +284,9 @@ def test_hung_worker_is_reported_with_the_rule_that_hung(env, ef):
         _wait(lambda: _status(env, r["id"])["status"] == "failed", timeout=30)
         run = _status(env, r["id"])
         assert run["error_code"] == "WORKER_STALLED"
-        assert "執行規則：HANG" in run["error_message"] and "regex" in run["error_message"]
+        # the stored (and exported) message names the stage and the rule's position, not the user's rule id
+        assert "執行規則（第 1/1 條）" in run["error_message"] and "regex" in run["error_message"]
+        assert "HANG" not in run["error_message"]
     finally:
         m.stop()
 

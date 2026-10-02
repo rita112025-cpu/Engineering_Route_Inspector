@@ -164,7 +164,8 @@ def run_analysis(entities: list[GeometryEntity], ruleset: dict, *, drawing_key: 
     rule_stats = []
     for n, rule in enumerate(rules):
         rt = time.perf_counter()
-        progress("rules", 0.35 + 0.45 * n / max(1, len(rules)), rule["id"])   # names the rule if it hangs
+        where = f"{rule['id']}（第 {n + 1}/{len(rules)} 條）"
+        progress("rules", 0.35 + 0.45 * n / max(1, len(rules)), where)   # names the rule if it hangs
         rr = evaluate_rule(rule, ctx)
         results.extend(rr)
         c = Counter(r.status for r in rr)
@@ -173,7 +174,7 @@ def run_analysis(entities: list[GeometryEntity], ruleset: dict, *, drawing_key: 
                            "FAIL": c["FAIL"], "WARNING": c["WARNING"], "PASS": c["PASS"], "UNKNOWN": c["UNKNOWN"],
                            "seconds": round(time.perf_counter() - rt, 4),
                            "evidence_id": rr[0].evidence_id if rr else None})
-        progress("rules", 0.35 + 0.45 * (n + 1) / max(1, len(rules)), f"{rule['id']}")
+        progress("rules", 0.35 + 0.45 * (n + 1) / max(1, len(rules)), where)
     timings["rules"] = time.perf_counter() - t0
 
     stage("evidence", 0.82)

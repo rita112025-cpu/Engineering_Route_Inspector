@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.diagnose:
         from . import diagnostics
-        info = diagnostics.collect(Path(args.data_dir) if args.data_dir else default_data_dir())
+        info = diagnostics.collect(Path(args.data_dir) if args.data_dir else default_data_dir(), deep=True)
         info.pop("log_tail", None)
         if args.json:
             print(json.dumps(info, ensure_ascii=False, indent=2))

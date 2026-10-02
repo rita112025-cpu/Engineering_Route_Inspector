@@ -589,7 +589,10 @@ def apply_confidence(results: list[RuleResult], rule: dict, evidence: EvidenceCh
                 reasons.append("圖面未宣告單位（$INSUNITS），以 mm 推定")
             r.confidence = "CONFIRMED" if not reasons else "INFERRED"
             if not reasons:
-                reasons.append("規範原文含相同的數值與單位（比較方向與適用對象仍需人工確認）")
+                if r.measurement in NUMERIC_VALUE_MEASUREMENTS:
+                    reasons.append("規範原文含相同的數值與單位（比較方向與適用對象仍需人工確認）")
+                else:
+                    reasons.append("已連結規範原文（此類規則沒有數值可與原文比對；適用對象與方向仍需人工確認）")
         r.details["confidence_reasons"] = reasons
 
 
