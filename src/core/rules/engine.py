@@ -8,7 +8,7 @@ from typing import Callable, Sequence
 from core.geometry.measure import (
     entity_distance, max_off_axis, overlap_length, principal_angle, zone_relation,
 )
-from core.evidence.chunks import numbers_in
+from core.evidence.chunks import quantities_in
 from core.geometry.primitives import expand_bbox
 from core.models.entities import GeometryEntity
 from core.models.results import EvidenceChunk, RuleResult
@@ -275,10 +275,6 @@ class RuleEvaluator:
         base = self.value + self.margin
         if self.op in (">=", ">", "==", "!="):
             return max(self.to_drawing_units(base) * 2.0, EPS)
-        if self.rule.get("quantifier", "all") == "all":
-            # "every target must be within X": targets farther than X are the violations,
-            # so the whole drawing has to be searched
-            return max(self.ctx.extent * 2.0, self.to_drawing_units(self.value) * 3.0, EPS)
         return max(self.to_drawing_units(self.value) * 3.0, EPS)
 
     def pair_value(self, s: GeometryEntity, t: GeometryEntity, cutoff: float):
@@ -348,7 +344,8 @@ class RuleEvaluator:
         target_pred = rule["target"]
         allow_text = P.explicitly_mentions_text(target_pred)
         target_flag = [((e.is_geometric or allow_text) and P.match_entity(target_pred, e)) for e in ctx.entities]
-        any_target = any(target_flag)
+        target_total = sum(target_flag)
+        any_target = target_total > 0
         pair_filter = rule.get("pair_filter") or None
         radius = self._search_radius()
         quant = rule.get("quantifier", "all")
@@ -367,6 +364,9 @@ class RuleEvaluator:
                                            "無目標物件"))
                 continue
             sid = ctx.pos[id(s)]
+            if quant == "all" and self.op in ("<=", "<") and not pair_filter:
+                out.append(self._all_within(s, sid, target_flag, target_total))
+                continue
             evals = []
             for idx in ctx.index.query(expand_bbox(s.bbox, radius)):
                 if idx == sid or not target_flag[idx]:
@@ -396,8 +396,77 @@ class RuleEvaluator:
             r.fix = self.fix_text(v, label(s), label(t) if t is not None else "")
         return r
 
+    def _all_within(self, s, sid, target_flag, target_total) -> RuleResult:
+        """"Every target must be within X" without comparing each subject with each target.
+
+        The spatial index returns the targets inside X (+ margin); a target outside that window violates
+        the rule, so the violation count is ``targets - found`` and only one violator is measured.
+        One result per subject.
+        """
+        ctx = self.ctx
+        reach = max(self.to_drawing_units(self.value), EPS)
+        found: dict[int, tuple] = {}
+        for idx in ctx.index.query(expand_bbox(s.bbox, reach)):
+            if idx == sid or not target_flag[idx]:
+                continue
+            t = ctx.entities[idx]
+            pv = self.pair_value(s, t, reach)
+            if pv is None:
+                continue                                   # inside the window's corner, but farther than X
+            kind, v, dr, why = pv
+            found[idx] = ("UNKNOWN" if kind == "unknown" else self.classify_value(v), t, v, dr, why)
+        others = target_total - (1 if target_flag[sid] else 0)
+        far = others - len(found)
+        if far > 0:
+            handles, first = [], None
+            for i, flag in enumerate(target_flag):
+                if flag and i != sid and i not in found:
+                    first = first if first is not None else i
+                    handles.append(ctx.entities[i].handle)
+                    if len(handles) >= 20:
+                        break
+            t = ctx.entities[first]
+            dr = entity_distance(s, t)
+            v = self.to_rule_units(dr.distance)
+            res = self._pair_result(self.classify_value(v), s, t, v, dr, "2D 平面最短距離")
+            res.details["violations"] = {"count": far, "handles": handles}
+            if far > 1:
+                res.message += f"（另有 {far - 1} 個目標同樣不符）"
+            return res
+        evals = list(found.values())
+        collapsed = self._collapse_upper_bound(s, evals)
+        if collapsed is not None:
+            return collapsed
+        best = min(evals, key=lambda ev: -ev[2]) if evals else None
+        if best is None:
+            return self.result("PASS", s, (), None, s.center(), self.pair_message("PASS", s, None, None), "搜尋範圍內無目標物件")
+        return self._pair_result("PASS", s, best[1], best[2], best[3], best[4])
+
+    def _collapse_upper_bound(self, s, evals) -> RuleResult | None:
+        """"every target must be within X": one result per subject, for the worst offender.
+
+        Reporting each too-far target separately would produce subjects x targets results.
+        """
+        bad = [ev for ev in evals if ev[0] != "PASS"]
+        if not bad:
+            return None
+        rank = {"FAIL": 0, "WARNING": 1, "UNKNOWN": 2}
+        top = min(rank[ev[0]] for ev in bad)
+        group = [ev for ev in bad if rank[ev[0]] == top]
+        status, t, v, dr, why = max(group, key=lambda ev: ev[2] if ev[2] is not None else -math.inf)
+        res = self._pair_result(status, s, t, v, dr, why)
+        res.details["violations"] = {"count": len(group), "handles": [ev[1].handle for ev in group[:20]]}
+        if len(group) > 1:
+            res.message += f"（另有 {len(group) - 1} 個目標同樣不符）"
+        return res
+
     def _resolve_all(self, s, evals, emitted) -> list[RuleResult]:
         out = []
+        if self.op in ("<=", "<"):
+            collapsed = self._collapse_upper_bound(s, evals)
+            if collapsed is not None:
+                return [collapsed]
+            evals = [ev for ev in evals if ev[0] == "PASS"]
         for status, t, v, dr, why in evals:
             if status == "PASS":
                 continue
@@ -444,33 +513,32 @@ class RuleEvaluator:
 
 NUMERIC_VALUE_MEASUREMENTS = {"distance", "minimum_distance", "horizontal_clearance", "vertical_clearance",
                               "overlap", "length", "angle", "off_axis_angle"}
-
-
-def _value_candidates(rule: dict) -> list[float]:
-    """The rule value written in every unit a specification might use."""
-    v = float(rule["value"])
-    unit = rule.get("unit", "")
-    if unit in UNITS_TO_MM:
-        mm = v * UNITS_TO_MM[unit]
-        return [mm / f for f in UNITS_TO_MM.values()]
-    return [v]
+ANGLE_MEASUREMENTS = {"angle", "off_axis_angle"}
 
 
 def evidence_number_problem(rule: dict, evidence: EvidenceChunk) -> str:
-    """Why the evidence text does not support the rule's numeric value ('' when it does or is not checkable)."""
-    if rule["measurement"] not in NUMERIC_VALUE_MEASUREMENTS:
+    """Why the evidence text does not support the rule's value ('' when it does or is not checkable).
+
+    Quantities are compared as value *and* unit, normalised to millimetres (or degrees): 300 mm = 30 cm =
+    0.3 m, but 300 cm is 3000 mm. A bare number never supports a length or an angle.
+    """
+    m = rule["measurement"]
+    if m not in NUMERIC_VALUE_MEASUREMENTS:
         return ""
     ref = rule.get("evidence_ref") or {}
     text = ref.get("quote") if ref.get("quote") else evidence.text
-    nums = numbers_in(text)
-    value, unit = rule["value"], rule.get("unit", "")
-    if not nums:
-        return f"規範證據文字沒有出現數值，無法佐證規則數值 {fmt(float(value))} {unit}"
-    cands = _value_candidates(rule)
-    if any(math.isclose(n, c, rel_tol=1e-9, abs_tol=1e-9) for n in nums for c in cands):
-        return ""
-    shown = "、".join(fmt(n) for n in nums[:4])
-    return f"規範證據中的數值（{shown}）與規則數值 {fmt(float(value))} {unit} 不一致"
+    value, unit = float(rule["value"]), rule.get("unit", "")
+    angle = m in ANGLE_MEASUREMENTS
+    want = value if angle else value * UNITS_TO_MM.get(unit, 1.0)
+    same_kind = [(v, u, t) for v, u, t in quantities_in(text) if (u == "deg") == angle]
+    if not same_kind:
+        return f"規範證據文字沒有帶單位的數值，無法佐證規則數值 {fmt(value)} {unit}"
+    for v, u, _ in same_kind:
+        got = v if angle else v * UNITS_TO_MM[u]
+        if math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9):
+            return ""
+    shown = "、".join(t for _, _, t in same_kind[:4])
+    return f"規範證據中的數值（{shown}）與規則數值 {fmt(value)} {unit} 不一致"
 
 
 def apply_confidence(results: list[RuleResult], rule: dict, evidence: EvidenceChunk | None,

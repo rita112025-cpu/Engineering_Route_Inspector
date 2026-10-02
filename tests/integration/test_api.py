@@ -209,7 +209,7 @@ def test_second_run_on_a_busy_drawing_is_refused(live, project):
 
 def test_cancel_a_running_analysis(live, project):
     rs = dict(project["ruleset"], rules=[HANG])
-    assert live.http.put(f"/api/projects/{project['pid']}/rules", json=rs).status_code == 200
+    live.state.db.repo().save_ruleset(project["pid"], rs)      # the API refuses this pattern; the worker must still cope
     # a TEXT entity the hanging rule can chew on
     doc = ezdxf.new("R2018")
     doc.modelspace().add_text("a" * 40 + "!", dxfattribs={"layer": "NOTE"})
@@ -265,7 +265,8 @@ def test_exports_over_http(live, project):
         r = live.http.post(f"/api/runs/{run['id']}/exports", json={"format": fmt})
         assert r.status_code == 201, (fmt, r.text)
         row = r.json()
-        assert row["saved_to"].startswith(str(live.config.data_dir.resolve())) and "/exports/" in row["saved_to"]
+        assert not row["saved_to"].startswith("/") and ":" not in row["saved_to"] and "/exports/" in row["saved_to"]
+        assert (live.config.data_dir / row["saved_to"]).is_file()
         dl = live.http.get(row["download_url"])
         assert dl.status_code == 200 and dl.headers["content-type"].startswith(ctype)
         assert dl.headers["content-disposition"].startswith("attachment")

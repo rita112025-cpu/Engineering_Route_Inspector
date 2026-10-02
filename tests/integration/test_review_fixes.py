@@ -273,3 +273,17 @@ def test_markers_come_from_the_folder_below_tests_only(tmp_path):
     out = sp.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-m", "regression",
                   "tests/regression"], cwd=root, capture_output=True, text=True)
     assert "test_audit_findings" in out.stdout and "test_jobs" not in out.stdout
+
+
+def test_hung_worker_is_reported_with_the_rule_that_hung(env, ef):
+    p, d, rs = env.project_with_drawing([ef.text("NOTE", (0, 0), "a" * 40 + "!")], rules=ruleset(HANG_RULE))
+    r = env.repo.create_run(p["id"], d, rs, None)
+    m = M.JobManager(env.storage.data_dir, run_timeout=3600, stall_timeout=2.0)
+    try:
+        m.start()
+        _wait(lambda: _status(env, r["id"])["status"] == "failed", timeout=30)
+        run = _status(env, r["id"])
+        assert run["error_code"] == "WORKER_STALLED"
+        assert "執行規則：HANG" in run["error_message"] and "regex" in run["error_message"]
+    finally:
+        m.stop()

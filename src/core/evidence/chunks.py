@@ -85,6 +85,31 @@ def numbers_in(text: str) -> list[float]:
     return [float(m.replace(",", "")) for m in _NUM_RE.findall(t)]
 
 
+_UNIT_WORDS = {
+    "mm": "mm", "毫米": "mm", "公釐": "mm", "millimeter": "mm", "millimeters": "mm", "millimetre": "mm", "millimetres": "mm",
+    "cm": "cm", "公分": "cm", "centimeter": "cm", "centimeters": "cm", "centimetre": "cm", "centimetres": "cm",
+    "m": "m", "公尺": "m", "米": "m", "meter": "m", "meters": "m", "metre": "m", "metres": "m",
+    "ft": "ft", "foot": "ft", "feet": "ft", "呎": "ft", "英尺": "ft",
+    "in": "in", "inch": "in", "inches": "in", "吋": "in", "英吋": "in",
+    "°": "deg", "度": "deg", "deg": "deg", "degree": "deg", "degrees": "deg",
+}
+_QTY_RE = re.compile(
+    r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*("
+    + "|".join(re.escape(w) for w in sorted(_UNIT_WORDS, key=len, reverse=True))
+    + r")(?![A-Za-z0-9²³])", re.IGNORECASE)
+
+
+def quantities_in(text: str) -> list[tuple[float, str, str]]:
+    """(value, canonical unit, matched text) for every number written *with* a unit.
+
+    Numbers without a unit (clause numbers, counts) are deliberately not quantities: they cannot
+    support a length or an angle.
+    """
+    t = unicodedata.normalize("NFKC", text or "")
+    return [(float(m.group(1).replace(",", "")), _UNIT_WORDS[m.group(2).lower()], m.group(0))
+            for m in _QTY_RE.finditer(t)]
+
+
 def _inside_larger_number(nt: str, start: int, end: int) -> bool:
     """True when nt[start:end] begins or ends in the middle of a number (``300`` inside ``1300``/``300.5``)."""
     if nt[start].isdigit():

@@ -12,6 +12,7 @@ import hashlib
 import re
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -56,7 +57,16 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+    # Switching a new database to WAL needs a lock that SQLite refuses to wait for when several
+    # connections open it at the same moment, so retry instead of failing.
+    for attempt in range(40):
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            break
+        except sqlite3.OperationalError:
+            if attempt == 39:
+                raise
+            time.sleep(0.05)
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 

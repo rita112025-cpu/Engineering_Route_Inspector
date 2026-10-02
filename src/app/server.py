@@ -25,7 +25,7 @@ from persistence.db import Database
 from persistence.storage import Storage
 from .api import ROUTES
 from .config import DEFAULT_PORT, AppConfig, ConfigError, default_data_dir
-from .errors import KNOWN, ApiError, api_error_handler, known_error_handler, unexpected_error_handler
+from .errors import KNOWN, clean_log, ApiError, api_error_handler, known_error_handler, unexpected_error_handler
 from .security import BodyLimitMiddleware, SecurityMiddleware
 from .state import AppState
 
@@ -64,7 +64,7 @@ class AccessLogMiddleware:
         try:
             await self.app(scope, receive, send2)
         finally:
-            log.info("%s %s -> %s %.0f ms", scope["method"], scope["path"], status, (time.perf_counter() - t0) * 1000)
+            log.info("%s %s -> %s %.0f ms", clean_log(scope["method"]), clean_log(scope["path"]), status, (time.perf_counter() - t0) * 1000)
 
 
 def create_app(config: AppConfig) -> Starlette:

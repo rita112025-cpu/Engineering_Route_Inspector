@@ -164,6 +164,7 @@ def run_analysis(entities: list[GeometryEntity], ruleset: dict, *, drawing_key: 
     rule_stats = []
     for n, rule in enumerate(rules):
         rt = time.perf_counter()
+        progress("rules", 0.35 + 0.45 * n / max(1, len(rules)), rule["id"])   # names the rule if it hangs
         rr = evaluate_rule(rule, ctx)
         results.extend(rr)
         c = Counter(r.status for r in rr)

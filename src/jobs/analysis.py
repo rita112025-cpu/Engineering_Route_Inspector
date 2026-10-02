@@ -41,11 +41,11 @@ class Throttle:
 def make_hooks(repo: Repo, run_id: str) -> tuple[Callable[[str, float, str], None], Callable[[], bool]]:
     """Progress writer and cancel checker backed by the runs table."""
     prog_t, cancel_t = Throttle(PROGRESS_INTERVAL), Throttle(CANCEL_INTERVAL)
-    state = {"stage": None, "cancelled": False}
+    state = {"stage": None, "note": None, "cancelled": False}
 
     def progress(stage: str, frac: float, note: str = "") -> None:
-        if stage != state["stage"] or prog_t.ready():
-            state["stage"] = stage
+        if stage != state["stage"] or note != state["note"] or prog_t.ready():
+            state["stage"], state["note"] = stage, note
             repo.update_progress(run_id, stage, frac, note)
 
     def cancel_check() -> bool:

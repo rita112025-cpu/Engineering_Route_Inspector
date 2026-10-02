@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import traceback
 
 from starlette.requests import Request
@@ -15,6 +16,12 @@ from persistence.db import MigrationError
 from persistence.storage import StorageError, UploadTooLarge
 
 log = logging.getLogger("eri")
+_CTRL = re.compile(r"[\x00-\x1f\x7f\u2028\u2029]")
+
+
+def clean_log(text) -> str:
+    """Text safe to write as one log line: control characters (newlines!) are shown escaped."""
+    return _CTRL.sub(lambda m: f"\\x{ord(m.group()):02x}", str(text))
 
 
 class ApiError(Exception):
@@ -45,9 +52,11 @@ async def known_error_handler(request: Request, exc: Exception):
     if isinstance(exc, RuleError):
         return payload(400, "RULES_INVALID", f"規則有 {len(exc.errors)} 個問題，請修正後再儲存。", errors=exc.errors)
     if isinstance(exc, DrawingImportError):
-        return payload(400, "DRAWING_UNREADABLE", f"{exc.user_message}：{exc.reason}", detail=exc.detail)
+        log.info("drawing import failed: %s", clean_log(exc.detail))        # detail may hold file paths: log only
+        return payload(400, "DRAWING_UNREADABLE", f"{exc.user_message}：{exc.reason}")
     if isinstance(exc, DocumentImportError):
-        return payload(400, "DOCUMENT_UNREADABLE", f"{exc.user_message}：{exc.reason}", detail=exc.detail)
+        log.info("document import failed: %s", clean_log(exc.detail))
+        return payload(400, "DOCUMENT_UNREADABLE", f"{exc.user_message}：{exc.reason}")
     if isinstance(exc, ExportError):
         return payload(409, "EXPORT_FAILED", exc.message)
     if isinstance(exc, StorageError):
@@ -59,7 +68,7 @@ async def known_error_handler(request: Request, exc: Exception):
 
 async def unexpected_error_handler(request: Request, exc: Exception):
     """Never leak a traceback to the browser; keep it in the server log for diagnostics."""
-    log.error("unhandled %s on %s %s\n%s", type(exc).__name__, request.method, request.url.path,
+    log.error("unhandled %s on %s %s\n%s", type(exc).__name__, request.method, clean_log(request.url.path),
               "".join(traceback.format_exception(exc))[-3000:])
     return payload(500, "INTERNAL_ERROR", "程式發生未預期的錯誤。細節已寫入記錄檔，請在診斷頁面匯出診斷資料。")
 

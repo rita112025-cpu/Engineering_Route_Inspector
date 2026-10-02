@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.analysis.pipeline import STAGES
 from persistence.db import connect
 from persistence.repo import Repo
 
@@ -28,7 +29,7 @@ SRC_DIR = Path(__file__).resolve().parents[1]
 CANCEL_GRACE_SECONDS = 5.0
 POLL_SECONDS = 0.25
 DEFAULT_RUN_TIMEOUT = 1800.0   # seconds; last line of defence against a run that never ends
-DEFAULT_STALL_TIMEOUT = 300.0  # seconds without a heartbeat from a running worker (it writes one every ~0.3 s)
+DEFAULT_STALL_TIMEOUT = 60.0   # seconds without a heartbeat from a running worker (it writes one every ~0.3 s)
 LOG_RETENTION_DAYS = 30
 
 
@@ -90,10 +91,9 @@ def same_process(pid: int | None, create_time: float | None):
 class JobManager:
     def __init__(self, data_dir: str | Path, max_workers: int = 1, run_timeout: float | None = None,
                  stall_timeout: float | None = None):
-        self.run_timeout = float(run_timeout if run_timeout is not None
-                                 else os.environ.get("ERI_RUN_TIMEOUT", DEFAULT_RUN_TIMEOUT))
-        self.stall_timeout = float(stall_timeout if stall_timeout is not None
-                                   else os.environ.get("ERI_STALL_TIMEOUT", DEFAULT_STALL_TIMEOUT))
+        self.events: list[dict] = []        # recent manager events (diagnostics)
+        self.run_timeout = self._setting(run_timeout, "ERI_RUN_TIMEOUT", DEFAULT_RUN_TIMEOUT)
+        self.stall_timeout = self._setting(stall_timeout, "ERI_STALL_TIMEOUT", DEFAULT_STALL_TIMEOUT)
         self.data_dir = Path(data_dir).resolve()
         self.db_path = self.data_dir / "eri.sqlite3"
         self.logs_dir = self.data_dir / "logs"
@@ -104,7 +104,6 @@ class JobManager:
         self.wake_event = threading.Event()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
-        self.events: list[dict] = []        # recent manager events (diagnostics)
         self.conn = connect(self.db_path)
         self.repo = Repo(self.conn)
 
@@ -146,6 +145,19 @@ class JobManager:
 
     def wake(self) -> None:
         self.wake_event.set()
+
+    def _setting(self, explicit, env: str, default: float) -> float:
+        raw = explicit if explicit is not None else os.environ.get(env)
+        if raw is None:
+            return default
+        try:
+            value = float(raw)
+            if value > 0 and value != float("inf"):
+                return value
+        except (TypeError, ValueError):
+            pass
+        self._event("bad_setting", "", f"{env}={raw!r} ignored, using {default:g}")
+        return default
 
     def _event(self, kind: str, run_id: str, detail: str = "") -> None:
         self.events.append({"ts": time.time(), "kind": kind, "run_id": run_id, "detail": detail})
@@ -221,8 +233,7 @@ class JobManager:
                     t.kill()
                     self.repo.finish_run(
                         rid, "failed", error_code="WORKER_STALLED",
-                        error_message=f"分析程序超過 {self.stall_timeout:.0f} 秒沒有回應而被停止。"
-                                      "可能是規則過於複雜，請簡化規則後重試。",
+                        error_message=self._stall_message(rid),
                         error_detail=_log_tail(t.log_path))
                     self._event("stalled", rid)
                 elif now - t.started > self.run_timeout and t.exit_code() is None:
@@ -239,6 +250,14 @@ class JobManager:
                 self.repo.finish_run(rid, "cancelled", error_code="CANCELLED",
                                      error_message="使用者取消（分析程序未及時回應，已強制停止）")
                 self._event("killed", rid)
+
+    def _stall_message(self, rid: str) -> str:
+        run = self.repo.get_run(rid) or {}
+        label = dict(STAGES).get(run.get("stage"), run.get("stage") or "")
+        note = f"：{run['stage_note']}" if run.get("stage_note") else ""
+        hint = ("這通常是這條規則的比對規則（regex）太複雜，請簡化它。" if run.get("stage") == "rules"
+                else "請重新執行；若持續發生，請在診斷頁面匯出診斷資料。")
+        return f"分析在「{label}{note}」超過 {self.stall_timeout:.0f} 秒沒有回應，已停止。{hint}"
 
     def _stalled(self, rid: str, t: Tracked) -> bool:
         """A running worker that stopped writing heartbeats (hung inside one step) and is still alive."""

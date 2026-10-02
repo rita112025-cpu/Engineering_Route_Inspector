@@ -400,7 +400,7 @@ const exportAs = guard(async (fmt) => {
   try {
     const row = await api.post(`/api/runs/${app.run.id}/exports`, { format: fmt });
     clear(status);
-    status.append("已儲存到：", row.saved_to, " ", el("a", { href: row.download_url, download: row.name, id: "export-link" }, "再下載一次"));
+    status.append("已儲存（資料夾內的位置）：", row.saved_to, " ", el("a", { href: row.download_url, download: row.name, id: "export-link" }, "再下載一次"));
     $("#export-link").click();
   } finally {
     app.exporting = false;

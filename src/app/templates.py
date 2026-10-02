@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from core.evidence.chunks import numbers_in
+from core.evidence.chunks import numbers_in, quantities_in
 from core.rules.schema import RuleError, normalize_rule
 
 TEMPLATES: list[dict[str, Any]] = [
@@ -53,11 +53,6 @@ TEMPLATES: list[dict[str, Any]] = [
 ]
 BY_ID = {t["id"]: t for t in TEMPLATES}
 
-UNIT_WORDS = {"mm": "mm", "毫米": "mm", "公釐": "mm", "cm": "cm", "公分": "cm", "m": "m", "公尺": "m", "米": "m",
-              "ft": "ft", "呎": "ft", "英尺": "ft", "in": "in", "吋": "in", "英吋": "in", "°": "deg", "度": "deg"}
-_NUM_UNIT = re.compile(r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(mm|cm|ft|in|m|毫米|公釐|公分|公尺|英尺|英吋|呎|吋|米|°|度)(?![A-Za-z])",
-                       re.IGNORECASE)
-
 
 def selector_to_predicate(sel: Any, label: str) -> dict:
     if not isinstance(sel, dict) or len(sel) != 1:
@@ -79,11 +74,8 @@ def describe_selector(sel: dict) -> str:
 
 def suggest_values(text: str) -> list[dict]:
     """Numbers (with unit when one follows) found in a specification paragraph, in reading order."""
-    found = [{"value": float(m.group(1).replace(",", "")), "unit": UNIT_WORDS.get(m.group(2).lower()),
-              "text": m.group(0)} for m in _NUM_UNIT.finditer(text or "")]
-    if not found:
-        found = [{"value": n, "unit": None, "text": f"{n:g}"} for n in numbers_in(text)]
-    return found
+    found = [{"value": v, "unit": u, "text": t} for v, u, t in quantities_in(text)]
+    return found or [{"value": n, "unit": None, "text": f"{n:g}"} for n in numbers_in(text)]
 
 
 def new_rule_id(base: str, taken: set[str]) -> str:
@@ -101,6 +93,12 @@ def build_rule(template_id: str, params: dict, taken_ids: set[str]) -> dict:
     if not isinstance(params, dict):
         raise RuleError(["參數格式錯誤"])
     errs = []
+    for key, kind in (("name", str), ("id", str), ("severity", str), ("unit", str), ("evidence_id", str)):
+        if params.get(key) is not None and not isinstance(params[key], kind):
+            raise RuleError([f"參數 {key} 的格式不正確"])
+    wm_raw = params.get("warn_margin")
+    if wm_raw not in (None, "") and (isinstance(wm_raw, bool) or not isinstance(wm_raw, (int, float))):
+        raise RuleError(["警示範圍必須是數字"])
     rule: dict[str, Any] = {"measurement": t["measurement"], "operator": t["operator"]}
     for key, label in (("subject", "檢查對象"), ("target", "附近物件"), ("zone", "區域")):
         if key in t["needs"]:
@@ -110,7 +108,7 @@ def build_rule(template_id: str, params: dict, taken_ids: set[str]) -> dict:
                 errs.extend(exc.errors)
     if "value" in t["needs"]:
         value = params.get("value", t.get("default_value"))
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or value in (float("inf"), float("-inf")):
             errs.append("請輸入數值")
         elif value < 0 or (t["measurement"] == "entity_count" and value != int(value)):
             errs.append("數值必須是非負數" + ("（整數）" if t["measurement"] == "entity_count" else ""))

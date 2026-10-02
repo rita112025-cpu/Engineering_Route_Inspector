@@ -144,7 +144,7 @@ def test_first_run_experience_end_to_end(loaded, tmp_path):
         target = tmp_path / d.suggested_filename
         d.save_as(target)
         results[fmt] = target.read_bytes()
-        assert "已儲存到：" in page.inner_text("#export-status")
+        assert "已儲存" in page.inner_text("#export-status")
     rows = list(csv.reader(io.StringIO(results["csv"].decode("utf-8-sig"))))
     assert len(rows) == 5 and rows[0][:2] == ["問題編號", "狀態"]
     assert "# 工程管線檢查報告" in results["markdown"].decode()
@@ -174,7 +174,7 @@ def test_cancel_button_stops_a_running_analysis(ui):
     pid = page.evaluate("() => window.eri.app.project.id")
     hang = {"systems": [], "rules": [{"id": "HANG", "name": "hang", "subject": {"entity_type": "TEXT", "text_regex": "^(a|aa)+$"},
                                        "measurement": "entity_count", "operator": ">=", "value": 1}]}
-    assert srv.http.put(f"/api/projects/{pid}/rules", json=hang).status_code == 200
+    srv.state.db.repo().save_ruleset(pid, hang)      # the API itself refuses this pattern (see the security tests)
     page.reload()
     page.wait_for_selector("#drawing-list li")
     page.wait_for_function("() => !document.querySelector('#run-btn').disabled")

@@ -17,6 +17,7 @@ from starlette.routing import Route
 
 from core.analysis.pipeline import STAGES
 from core.evidence.chunks import search as search_chunks
+from core.rules.regexcheck import check_ruleset
 from core.rules.schema import RuleError, normalize_ruleset
 from core.version import SOFTWARE_VERSION
 from exporters import service as export_service
@@ -63,9 +64,14 @@ def run_of(request: Request) -> dict:
     return r
 
 
+def _no_constant(name: str):
+    raise ValueError(f"不允許的數值 {name}")
+
+
 async def json_body(request: Request) -> Any:
+    """Parsed JSON body. NaN / Infinity (accepted by Python's json) are refused: they would poison stored rules."""
     try:
-        return await request.json()
+        return json.loads(await request.body(), parse_constant=_no_constant)
     except (ValueError, UnicodeDecodeError):
         raise bad_request("送出的資料不是有效的 JSON。", "BAD_JSON") from None
 
@@ -347,12 +353,17 @@ async def put_rules(request: Request):
         body = body["ruleset"]
     if not isinstance(body, dict):
         raise bad_request("規則檔必須是 JSON 物件。", "BAD_JSON")
+    if not isinstance(body.get("rules", []), list):
+        raise bad_request("rules 必須是清單。", "RULES_INVALID", errors=["rules 必須是清單"])
     if len(body.get("rules", [])) > MAX_RULES:
         raise bad_request(f"規則最多 {MAX_RULES} 條。")
 
     def work():
         pid = project_of(request)["id"]
         norm = normalize_ruleset(body)
+        slow = check_ruleset(norm)
+        if slow:
+            raise RuleError(slow)
         S(request).repo().save_ruleset(pid, norm)
         return norm
     norm = await run_in_threadpool(work)
@@ -365,6 +376,9 @@ async def validate_rules(request: Request):
         body = body["ruleset"]
     try:
         norm = normalize_ruleset(body)
+        slow = await run_in_threadpool(check_ruleset, norm)
+        if slow:
+            raise RuleError(slow)
     except RuleError as exc:
         return JSONResponse({"valid": False, "errors": exc.errors})
     return JSONResponse({"valid": True, "errors": [], "rules": len(norm["rules"])})
@@ -502,7 +516,7 @@ async def create_export(request: Request):
         run = run_of(request)
         row = export_service.export_run(st.repo(), st.storage, run["id"], fmt)
         path = export_service.export_file(st.repo(), st.storage, row["id"])[0]
-        row.update(download_url=f"/api/exports/{row['id']}/download", saved_to=str(path))
+        row.update(download_url=f"/api/exports/{row['id']}/download", saved_to=row["path"])   # relative to the data folder
         return row
     return JSONResponse(await run_in_threadpool(work), status_code=201)
 

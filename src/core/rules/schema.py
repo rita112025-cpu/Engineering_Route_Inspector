@@ -24,6 +24,7 @@ Rule::
 from __future__ import annotations
 
 import copy
+import math
 import re
 from typing import Any
 
@@ -111,8 +112,8 @@ def normalize_rule(raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(op, str) or op not in OPERATORS:
         errs.append(f"{label}: 不支援的比較運算子 {op!r}")
     val = r.get("value")
-    if isinstance(val, bool) or not isinstance(val, (int, float)):
-        errs.append(f"{label}: 數值必須是數字")
+    if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+        errs.append(f"{label}: 數值必須是數字，且不可為 NaN 或無限大")
     unit = r.get("unit")
     if unit is None or unit == "":
         unit = default_unit(m or "")
@@ -127,7 +128,7 @@ def normalize_rule(raw: dict[str, Any]) -> dict[str, Any]:
         if unit not in ANGLE_UNITS:
             errs.append(f"{label}: 角度單位必須是 deg")
     wm = r.get("warn_margin")
-    if wm is not None and (isinstance(wm, bool) or not isinstance(wm, (int, float)) or wm < 0):
+    if wm is not None and (isinstance(wm, bool) or not isinstance(wm, (int, float)) or not math.isfinite(wm) or wm < 0):
         errs.append(f"{label}: warn_margin 必須是非負數字")
     try:
         if "subject" not in r:
@@ -148,6 +149,8 @@ def normalize_rule(raw: dict[str, Any]) -> dict[str, Any]:
             P.validate(r["pair_filter"], "pair")
     except P.PredicateError as exc:
         errs.append(f"{label}: {exc}")
+    if r.get("evidence_id") is not None and not isinstance(r["evidence_id"], str):
+        errs.append(f"{label}: evidence_id 必須是文字")
     ref = r.get("evidence_ref")
     if ref is not None:
         if not isinstance(ref, dict) or not isinstance(ref.get("quote", ""), str):
@@ -182,7 +185,10 @@ def normalize_ruleset(raw: dict[str, Any]) -> dict[str, Any]:
             errs.append(str(exc))
     rules = []
     seen = set()
-    for raw_rule in raw.get("rules", []):
+    raw_rules = raw.get("rules", [])
+    if not isinstance(raw_rules, list):
+        raise RuleError(["rules 必須是清單"])
+    for raw_rule in raw_rules:
         try:
             rule = normalize_rule(raw_rule)
         except RuleError as exc:
