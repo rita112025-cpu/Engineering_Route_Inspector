@@ -22,7 +22,9 @@
       <button type="button" class="btn small" id="project-rename">改名</button>
       <button type="button" class="btn small danger" id="project-delete">刪除專案</button>
     </div>
-    <div class="topbar-actions" id="topbar-actions"></div>
+    <div class="topbar-actions" id="topbar-actions">
+      <button type="button" class="btn" id="demo-load" title="載入內建的範例圖面、規範與規則，立刻試用">載入示範專案</button>
+    </div>
   </header>
 
   <aside class="steps" aria-label="操作步驟">
@@ -76,7 +78,7 @@
     <div class="viewer-wrap">
       <canvas id="viewer" tabindex="0" role="img" aria-label="圖面與問題位置。可用右側問題清單以鍵盤操作。"></canvas>
       <div class="layers-panel" id="layers-panel" hidden></div>
-      <div class="empty-note" id="viewer-empty">匯入圖面後，圖面會顯示在這裡。</div>
+      <div class="empty-note" id="viewer-empty">匯入圖面後，圖面會顯示在這裡。<br>第一次使用？按右上角「載入示範專案」。</div>
     </div>
   </main>
 

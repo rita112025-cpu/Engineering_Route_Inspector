@@ -119,6 +119,13 @@ def health(request: Request):
                          "job_manager": st.manager.status()["alive"]})
 
 
+# ---- demo -------------------------------------------------------------------------------------------
+
+def load_demo_project(request: Request):
+    from . import demo
+    return JSONResponse(demo.load_demo(S(request)))
+
+
 # ---- projects ---------------------------------------------------------------------------------------
 
 def list_projects(request: Request):
@@ -538,6 +545,7 @@ def download_export(request: Request):
 
 ROUTES = [
     Route("/api/health", health),
+    Route("/api/demo", load_demo_project, methods=["POST"]),
     Route("/api/projects", list_projects, methods=["GET"]),
     Route("/api/projects", create_project, methods=["POST"]),
     Route("/api/projects/{pid}", get_project, methods=["GET"]),

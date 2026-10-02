@@ -192,3 +192,6 @@ details.adv { margin-top: 16px; } details.adv summary { cursor: pointer; color: 
   .rb-sys { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.topbar-actions { margin-left: auto; }
+.empty-note { text-align: center; line-height: 2; }

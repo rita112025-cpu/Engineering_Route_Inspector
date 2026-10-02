@@ -429,6 +429,12 @@ function bind() {
     store.set("eri.project", "");
     await loadProjects();
   }));
+  $("#demo-load").addEventListener("click", guard(async () => {
+    const out = await api.post("/api/demo");
+    toast(out.created ? "已載入示範專案。接著按左側的「開始分析」。" : "示範專案已經存在，已切換過去。");
+    if (out.drawing_id) app.drawing = { id: out.drawing_id };
+    await loadProjects(out.project.id);
+  }));
   wireDrop("#drop-drawing", "#file-drawing");
   wireDrop("#drop-spec", "#file-spec");
   window.addEventListener("dragover", (e) => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); });

@@ -63,13 +63,28 @@ def _unit_suffix(issue: dict) -> str:
 def required_text(issue: dict) -> str:
     if issue["required_value"] is None:
         return ""
+    m = issue.get("measurement")
+    if m == "outside_zone":
+        return "必須在區域外"
+    if m == "inside_zone":
+        return "必須完全在區域內"
+    if m == "intersection":
+        return f"交叉數 {issue['required_op']} {issue['required_value']:g}"
     return f"{issue['required_op']} {issue['required_value']:g}{_unit_suffix(issue)}"
 
 
 def measured_text(issue: dict) -> str:
+    """The measurement in words a person reads. Zone and crossing rules measure a yes/no flag (1 = yes)."""
     if issue["measured"] is None:
         return ""
-    return f"{issue['measured']:g}{_unit_suffix(issue)}"
+    m, v = issue.get("measurement"), issue["measured"]
+    if m == "outside_zone":
+        return "在區域外" if v >= 1 else "進入了區域"
+    if m == "inside_zone":
+        return "完全在區域內" if v >= 1 else "不在（或未完全在）區域內"
+    if m == "intersection":
+        return "有交叉" if v >= 1 else "沒有交叉"
+    return f"{v:g}{_unit_suffix(issue)}"
 
 
 def evidence_ref_text(ev: dict | None) -> str:
