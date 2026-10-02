@@ -62,8 +62,9 @@ def validate(node: Any, kind: str = "entity", depth: int = 0) -> None:
                 if not isinstance(val, str):
                     raise PredicateError(f"'{key}' 必須是文字")
             elif key in ("entity_type", "system"):
-                if not isinstance(val, (str, list)):
-                    raise PredicateError(f"'{key}' 必須是文字或清單")
+                if not isinstance(val, (str, list)) or (
+                        isinstance(val, list) and (not val or not all(isinstance(v, str) for v in val))):
+                    raise PredicateError(f"'{key}' 必須是文字或非空的文字清單")
             elif not isinstance(val, bool):
                 raise PredicateError(f"'{key}' 必須是 true/false")
         else:
