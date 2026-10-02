@@ -1,0 +1,5 @@
+-r requirements.txt
+# Browser tests (tests/browser) drive a real headless Chromium. Optional: without Playwright or a
+# Chromium build those tests are skipped. Install a browser with `playwright install chromium`, or
+# point ERI_CHROMIUM at an existing Chrome/Chromium executable.
+playwright>=1.40

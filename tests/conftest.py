@@ -8,6 +8,7 @@ import threading
 import time
 from pathlib import Path
 
+import ezdxf
 import httpx
 import pytest
 
@@ -18,7 +19,7 @@ if str(SRC) not in sys.path:
 
 from core.models.entities import make_circle, make_polyline, make_text  # noqa: E402
 
-_MARKERS = ("unit", "integration", "regression", "security", "performance")
+_MARKERS = ("unit", "integration", "regression", "security", "performance", "browser")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -78,18 +79,23 @@ def free_port() -> int:
 
 
 class LiveServer:
-    """The real application served by uvicorn on 127.0.0.1, with a token-aware httpx client."""
+    """The real application served by uvicorn on 127.0.0.1, with a token-aware httpx client.
 
-    def __init__(self, tmp_path: Path, **config_overrides):
+    ``real_ui=True`` serves the application's own web page instead of a tiny test page.
+    """
+
+    def __init__(self, tmp_path: Path, real_ui: bool = False, **config_overrides):
         import uvicorn
         from app.config import AppConfig
         from app.server import create_app
         self.port = free_port()
-        static = tmp_path / "static"
-        static.mkdir(parents=True, exist_ok=True)
-        (static / "index.html").write_text(INDEX_HTML, encoding="utf-8")
-        (static / "app.js").write_text("console.log('x')", encoding="utf-8")
-        self.config = AppConfig(data_dir=tmp_path / "data", port=self.port, static_dir=static, **config_overrides)
+        if not real_ui:
+            static = tmp_path / "static"
+            static.mkdir(parents=True, exist_ok=True)
+            (static / "index.html").write_text(INDEX_HTML, encoding="utf-8")
+            (static / "app.js").write_text("console.log('x')", encoding="utf-8")
+            config_overrides["static_dir"] = static
+        self.config = AppConfig(data_dir=tmp_path / "data", port=self.port, **config_overrides)
         self.app = create_app(self.config)
         self.server = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1", port=self.port, log_level="error",
                                                     lifespan="on"))
@@ -103,7 +109,7 @@ class LiveServer:
         self.base = f"http://127.0.0.1:{self.port}"
         self.raw = httpx.Client(base_url=self.base, timeout=60)           # no token
         html = self.raw.get("/").text
-        self.token = re.search(r'content="([^"]+)"', html).group(1)
+        self.token = re.search(r'name="eri-token" content="([^"]+)"', html).group(1)
         self.http = httpx.Client(base_url=self.base, timeout=60, headers={"X-ERI-Token": self.token})
 
     @property
@@ -135,3 +141,24 @@ def live_factory(tmp_path):
     yield make
     for srv in made:
         srv.close()
+
+
+
+def write_sample_dxf(path: Path) -> Path:
+    """Small real drawing: one FAIL, one WARNING, one PASS, one UNKNOWN (crossing without Z)."""
+    doc = ezdxf.new("R2018")
+    doc.header["$INSUNITS"] = 4
+    msp = doc.modelspace()
+    scada = "SCADA-CABLE"
+    for y, gap in ((0, 250), (2000, 320), (4000, 500)):          # FAIL, WARNING, PASS
+        msp.add_line((0, y), (5000, y), dxfattribs={"layer": scada})
+        msp.add_line((0, y + gap), (5000, y + gap), dxfattribs={"layer": "POWER-CABLE"})
+    msp.add_line((7000, 0), (7000, 1000), dxfattribs={"layer": scada})                  # crossing -> UNKNOWN
+    msp.add_line((6500, 500), (7500, 500), dxfattribs={"layer": "POWER-CABLE"})
+    doc.saveas(path)
+    return path
+
+
+@pytest.fixture
+def sample_dxf(tmp_path):
+    return write_sample_dxf(tmp_path / "plan.dxf")

@@ -59,3 +59,12 @@ def test_min_count_needs_a_whole_number():
     with pytest.raises(RuleError):
         T.build_rule("min_count", {"subject": {"layer": "T"}, "value": 1.5}, set())
     assert T.build_rule("min_count", {"subject": {"layer": "T"}, "value": 2}, set())["unit"] == "count"
+
+
+def test_built_rules_remember_how_to_be_edited():
+    params = {"subject": {"system": "A"}, "target": {"system": "B"}, "value": 300, "unit": "mm", "warn_margin": 50}
+    r = T.build_rule("clearance", dict(params, evidence_id="EV-1", junk="x"), set())
+    assert r["builder"] == {"template_id": "clearance", "params": params}      # junk and evidence_id are not kept
+    # rebuilding from the stored parameters gives the same rule (this is what "edit" does)
+    again = T.build_rule(r["builder"]["template_id"], dict(r["builder"]["params"], id=r["id"], evidence_id="EV-1"), set())
+    assert {k: v for k, v in again.items() if k != "builder"} == {k: v for k, v in r.items() if k != "builder"}

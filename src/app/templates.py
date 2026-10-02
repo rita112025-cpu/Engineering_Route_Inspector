@@ -144,6 +144,9 @@ def build_rule(template_id: str, params: dict, taken_ids: set[str]) -> dict:
         rule["evidence_id"] = ev_id
     base = re.sub(r"[^A-Za-z0-9]+", "-", template_id.upper()).strip("-")
     rule["id"] = params.get("id") or new_rule_id(base, taken_ids)
+    # what the Rule Builder needs to reopen this rule for editing
+    keep = ("subject", "target", "zone", "value", "unit", "warn_margin", "severity", "name")
+    rule["builder"] = {"template_id": template_id, "params": {k: params[k] for k in keep if params.get(k) not in (None, "")}}
     return normalize_rule(rule)
 
 

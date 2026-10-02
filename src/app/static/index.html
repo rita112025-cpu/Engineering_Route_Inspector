@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="eri-token" content="__ERI_TOKEN__">
+<meta name="color-scheme" content="light dark">
+<title>工程管線檢查</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<noscript><p class="noscript">這個工具需要啟用 JavaScript 才能使用。</p></noscript>
+
+<div class="app" id="app">
+  <header class="topbar">
+    <h1 class="brand">工程管線檢查</h1>
+    <div class="project-bar">
+      <label for="project-select" class="sr-only">專案</label>
+      <select id="project-select" aria-label="專案"></select>
+      <button type="button" class="btn small" id="project-new">新增專案</button>
+      <button type="button" class="btn small" id="project-rename">改名</button>
+      <button type="button" class="btn small danger" id="project-delete">刪除專案</button>
+    </div>
+    <div class="topbar-actions" id="topbar-actions"></div>
+  </header>
+
+  <aside class="steps" aria-label="操作步驟">
+    <section class="step" id="step-drawing">
+      <h2><span class="num">1</span>圖面</h2>
+      <div class="drop" id="drop-drawing" tabindex="0" role="button" aria-label="匯入圖面：把 DXF 檔拖到這裡，或按 Enter 選擇檔案">
+        <strong>把 DXF 圖面拖到這裡</strong>
+        <small>或點一下選擇檔案</small>
+        <input type="file" id="file-drawing" accept=".dxf,.DXF" hidden>
+      </div>
+      <ul class="list" id="drawing-list" aria-label="已匯入的圖面"></ul>
+    </section>
+
+    <section class="step" id="step-spec">
+      <h2><span class="num">2</span>規範</h2>
+      <div class="drop" id="drop-spec" tabindex="0" role="button" aria-label="匯入規範：把 PDF、Word、TXT 或 Markdown 檔拖到這裡，或按 Enter 選擇檔案">
+        <strong>把規範拖到這裡</strong>
+        <small>PDF、Word（.docx）、TXT、Markdown</small>
+        <input type="file" id="file-spec" accept=".pdf,.docx,.txt,.md,.markdown" multiple hidden>
+      </div>
+      <ul class="list" id="doc-list" aria-label="已匯入的規範"></ul>
+      <div class="rules-summary">
+        <span id="rules-summary-text">尚未建立規則</span>
+        <button type="button" class="btn" id="rules-open">編輯規則…</button>
+      </div>
+    </section>
+
+    <section class="step" id="step-run">
+      <h2><span class="num">3</span>分析</h2>
+      <button type="button" class="btn primary big" id="run-btn" disabled>開始分析</button>
+      <p class="hint" id="run-hint">請先匯入圖面。</p>
+      <div class="progress-box" id="progress-box" hidden>
+        <progress id="progress" max="100" value="0" aria-label="分析進度"></progress>
+        <div class="progress-row"><span id="progress-label" role="status" aria-live="polite"></span>
+          <button type="button" class="btn small" id="cancel-btn">取消</button></div>
+      </div>
+    </section>
+  </aside>
+
+  <main class="stage" aria-label="圖面檢視">
+    <div class="viewer-bar">
+      <button type="button" class="btn small" id="view-fit" title="顯示全圖">全圖</button>
+      <button type="button" class="btn small" id="view-in" title="放大" aria-label="放大">＋</button>
+      <button type="button" class="btn small" id="view-out" title="縮小" aria-label="縮小">－</button>
+      <button type="button" class="btn small" id="layers-toggle" aria-expanded="false" aria-controls="layers-panel">圖層</button>
+      <span class="viewer-hint">拖曳平移　滾輪縮放　點紅色記號查看問題</span>
+      <span class="legend" aria-hidden="true">
+        <i class="mk fail"></i>不合格 <i class="mk warn"></i>警告 <i class="mk unk"></i>無法判定
+      </span>
+    </div>
+    <div class="viewer-wrap">
+      <canvas id="viewer" tabindex="0" role="img" aria-label="圖面與問題位置。可用右側問題清單以鍵盤操作。"></canvas>
+      <div class="layers-panel" id="layers-panel" hidden></div>
+      <div class="empty-note" id="viewer-empty">匯入圖面後，圖面會顯示在這裡。</div>
+    </div>
+  </main>
+
+  <section class="results" aria-label="分析結果">
+    <div class="results-head">
+      <div class="chips" id="chips" role="group" aria-label="依結果篩選"></div>
+      <p class="baseline" id="baseline" hidden></p>
+      <div class="results-tools" id="results-tools" hidden>
+        <label class="sr-only" for="issue-search">搜尋問題</label>
+        <input type="search" id="issue-search" placeholder="搜尋 Handle / 圖層 / 規則 / 說明">
+        <label class="sr-only" for="issue-sort">排序</label>
+        <select id="issue-sort" aria-label="排序">
+          <option value="severity">依嚴重度</option>
+          <option value="rule">依規則</option>
+          <option value="measured">依實測值</option>
+        </select>
+      </div>
+    </div>
+    <div class="results-empty" id="results-empty">還沒有分析結果。<br>匯入圖面與規範、建立規則後，按左側的「開始分析」。</div>
+    <div class="issue-list" id="issue-list" role="listbox" aria-label="問題清單" tabindex="0"></div>
+    <article class="detail" id="detail" hidden aria-live="polite"></article>
+    <div class="export-bar" id="export-bar" hidden>
+      <span class="export-label">匯出</span>
+      <button type="button" class="btn small" data-export="csv">CSV</button>
+      <button type="button" class="btn small" data-export="markdown">Markdown</button>
+      <button type="button" class="btn small" data-export="html">HTML 報告</button>
+      <button type="button" class="btn small" data-export="dxf">標註 DXF</button>
+      <p class="export-status" id="export-status" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<dialog id="rules-dialog" class="big" aria-labelledby="rules-title">
+  <div class="dlg-head"><h2 id="rules-title">規則設定</h2>
+    <button type="button" class="btn small" id="rules-close" aria-label="關閉">關閉</button></div>
+  <div class="rb-body" id="rb-body"></div>
+  <div class="dlg-foot"><span class="errors" id="rb-errors" role="alert"></span>
+    <button type="button" class="btn" id="rb-cancel">取消</button>
+    <button type="button" class="btn primary" id="rb-save">儲存規則</button></div>
+</dialog>
+
+<dialog id="ask-dialog" aria-labelledby="ask-title">
+  <form method="dialog" id="ask-form">
+    <h2 id="ask-title"></h2>
+    <p id="ask-text"></p>
+    <input type="text" id="ask-input" maxlength="100" hidden aria-label="輸入">
+    <div class="dlg-foot"><button type="button" class="btn" id="ask-cancel">取消</button>
+      <button type="submit" class="btn primary" id="ask-ok">確定</button></div>
+  </form>
+</dialog>
+
+<script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

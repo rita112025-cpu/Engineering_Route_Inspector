@@ -8,6 +8,7 @@ import pytest
 
 from importers.dxf import load_dxf
 from jobs.analysis import execute_run
+from tests.conftest import write_sample_dxf  # noqa: F401  (re-exported for the tests here)
 
 from core.rules.schema import normalize_ruleset
 from persistence.db import open_database
@@ -60,22 +61,3 @@ def env(tmp_path):
     yield e
     e.conn.close()
 
-
-def write_sample_dxf(path: Path) -> Path:
-    """Small real drawing: one FAIL, one WARNING, one PASS, one UNKNOWN (crossing without Z)."""
-    doc = ezdxf.new("R2018")
-    doc.header["$INSUNITS"] = 4
-    msp = doc.modelspace()
-    scada = "SCADA-CABLE"
-    for y, gap in ((0, 250), (2000, 320), (4000, 500)):          # FAIL, WARNING, PASS
-        msp.add_line((0, y), (5000, y), dxfattribs={"layer": scada})
-        msp.add_line((0, y + gap), (5000, y + gap), dxfattribs={"layer": "POWER-CABLE"})
-    msp.add_line((7000, 0), (7000, 1000), dxfattribs={"layer": scada})                  # crossing -> UNKNOWN
-    msp.add_line((6500, 500), (7500, 500), dxfattribs={"layer": "POWER-CABLE"})
-    doc.saveas(path)
-    return path
-
-
-@pytest.fixture
-def sample_dxf(tmp_path):
-    return write_sample_dxf(tmp_path / "plan.dxf")
