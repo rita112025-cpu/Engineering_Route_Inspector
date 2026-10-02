@@ -97,9 +97,9 @@ def test_r113_offline_diagnose_works_in_any_folder_name(tmp_path, folder):
 def test_r114_launchers_do_not_repeat_the_diagnosis_for_a_diagnose_run():
     sh = (ROOT / "start-ui.sh").read_text(encoding="ascii")
     bat = (ROOT / "start-ui.bat").read_bytes().decode("ascii")
-    assert '"${1:-}" != "--diagnose"' in sh
+    assert '[ "$a" = "--diagnose" ] && diagnosing=1' in sh and sh.rstrip().endswith('exit "$rc"')
     assert 'if /i "%~1"=="--diagnose" goto done_rc' in bat
-    assert re.search(r"^:done_rc\r?$", bat, re.M)
+    assert re.search(r"^:done_rc\r?$", bat, re.M)     # (the shell script's exit codes are run for real in test_review12_fixes)
 
 
 # -- redaction gaps listed by the reviewer ---------------------------------------------------------------
@@ -147,10 +147,10 @@ def test_old_failure_messages_with_a_rule_id_are_cleaned():
 
 
 @pytest.mark.parametrize("text", [
-    "x /elsewhere/documents/ab12_notes.md secret v2.pdf failed",
-    "x /elsewhere/drawings/1_a.dxf.bak secret",
-    "x /elsewhere/drawings/old secret plan.dwg",
-    "x C:\\elsewhere\\exports\\run secret.csv done",
+    "x /elsewhere/projects/p_0123456789abcdef/documents/ab12_notes.md secret v2.pdf failed",
+    "x /elsewhere/projects/p_0123456789abcdef/drawings/1_a.dxf.bak secret",
+    "x /elsewhere/projects/p_0123456789abcdef/drawings/old secret plan.dwg",
+    "x C:\\elsewhere\\projects\\p_0123456789abcdef\\exports\\run secret.csv done",
 ])
 def test_unknown_names_after_a_storage_folder_are_hidden_to_the_end_of_the_line(text):
     out = diagnostics.scrubber(Path("/data-root"))(text)

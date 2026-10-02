@@ -32,15 +32,20 @@ MIN_FREE_MB = 200
 LOG_TAIL_LINES = 120
 BUNDLE_LOG_BYTES = 400_000
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# unknown name after a storage folder (the database no longer knows it): hide to the end of the line, because
-# names can hold spaces, quotes and anything else. 'drawings/<file>' (already replaced) is left alone.
-_FILE_IN_STORAGE = re.compile(r"(?P<d>drawings|documents|exports)[\\/](?!<file>)[^\r\n]*", re.I)
+# An unknown name inside a project's storage folder (the database no longer knows it) is hidden to the end of the
+# line, because names can hold spaces, quotes and anything else. It is only recognised as a file-system path
+# ('projects/<id>/drawings/...'), never as a request URL ('/api/projects/<id>/drawings/...' keeps its status and
+# time). 'drawings/<file>' (already replaced) is left alone.
+_FILE_IN_STORAGE = re.compile(
+    r"(?<!/api/)(?P<pre>projects[\\/][a-z]{1,4}_[0-9a-f]{16}[\\/](?P<d>drawings|documents|exports))[\\/](?!<file>)[^\r\n]*",
+    re.I)
 # '<Class>:' inside a line, possibly module-qualified and possibly after a prefix ('worker said: ValueError: ...')
 _COLON_NAME = re.compile(r"(?<![\w.])((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*)\s*:")
 _EXC_SUFFIX = re.compile(r"(?:[Ee]rror|Exception|Warning|Exit|Interrupt|Failure|Timeout|Fault)$")
 _EXC_KNOWN = {"StopIteration", "StopAsyncIteration", "BadZipFile", "Cancelled", "UploadTooLarge", "RunGone",
               "RunInProgress", "KeyboardInterrupt", "SystemExit", "GeneratorExit"}
-_EXC_REPR = re.compile(r"\b(?P<cls>[A-Za-z_][\w.]*?(?:[Ee]rror|Exception))\((?:.*)\)")
+_EXC_REPR = re.compile(r"(?<![\w.])(?P<cls>[A-Za-z_][\w.]*?(?:[Ee]rror|Exception))\(.*$")
+MAX_LINE = 2000       # longer lines (a hostile request path in the log) are cut before any pattern runs: bounded cost
 # a line that starts something new: ends the (possibly multi-line) message of the exception before it
 _RECORD_START = re.compile(r"^(?:\s*$|\d{4}-\d\d-\d\d|Traceback|\s*File \"|During handling|The above exception)")
 OMITTED = "<內容已省略>"
@@ -60,7 +65,7 @@ def _redact_line(line: str) -> tuple[str, bool]:
     for m in _COLON_NAME.finditer(line):
         if _is_exception_name(m.group(1)):
             return f"{line[:m.end()]} {OMITTED}", True
-    return _EXC_REPR.sub(lambda m: f"{m.group('cls')}({OMITTED})", line), False
+    return _EXC_REPR.sub(lambda m: f"{m.group('cls')}({OMITTED})", line, count=1), False
 
 
 def redact_exceptions(text: str) -> str:
@@ -71,6 +76,8 @@ def redact_exceptions(text: str) -> str:
     out: list[str] = []
     in_message = False
     for line in text.split("\n"):
+        if len(line) > MAX_LINE:
+            line = line[:MAX_LINE] + "…"
         if in_message and not _RECORD_START.match(line) and not any(
                 _is_exception_name(m.group(1)) for m in _COLON_NAME.finditer(line)):
             continue
@@ -120,7 +127,7 @@ def scrubber(data_dir: Path, names=()):
                 text = text.replace(k, variants[k])
         for n in file_names:
             text = text.replace(n, "<file>")
-        return _FILE_IN_STORAGE.sub(lambda m: f"{m.group('d')}/<file>", text)
+        return _FILE_IN_STORAGE.sub(lambda m: f"{m.group('pre')}/<file>", text)
     return scrub
 
 

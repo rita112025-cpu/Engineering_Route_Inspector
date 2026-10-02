@@ -56,7 +56,9 @@ def test_bundle_is_a_zip_without_paths_or_content(live, sample_dxf):
 def test_scrubber_replaces_roots_in_every_spelling(tmp_path):
     scrub = diagnostics.scrubber(tmp_path / "data")
     root = str((tmp_path / "data").resolve())
-    text = f"open {root}/drawings/abc_x.dxf and {root.replace('/', chr(92))}\\exports\\r.csv failed"
+    pid = "p_0123456789abcdef"
+    text = (f"open {root}/projects/{pid}/drawings/abc_x.dxf and "
+            f"{root.replace('/', chr(92))}\\projects\\{pid}\\exports\\r.csv failed")
     out = scrub(text)
     assert root not in out and "<data>" in out
     assert "abc_x.dxf" not in out and "r.csv" not in out
@@ -70,7 +72,7 @@ def test_failed_run_message_is_scrubbed(live, sample_dxf):
     repo = st.repo()
     run = repo.create_run(pid, repo.get_drawing(did), repo.get_ruleset(pid), None)
     repo.finish_run(run["id"], "failed", error_code="WORKER_CRASHED",
-                    error_message=f"cannot read {root}/drawings/s_secret.dxf")
+                    error_message=f"cannot read {root}/projects/{pid}/drawings/s_secret.dxf")
     d = live.http.get("/api/diagnostics").json()
     msg = d["recent_failed_runs"][0]["message"]
     assert root not in msg and "secret.dxf" not in msg and "<data>" in msg

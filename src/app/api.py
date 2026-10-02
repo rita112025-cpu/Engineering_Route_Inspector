@@ -225,7 +225,10 @@ def _import_drawing(st: AppState, pid: str, filename: str, fileobj) -> dict:
         return repo.add_drawing(pid, name, stored.stored_name, stored.sha256, stored.size, imp.entities,
                                 unit_to_mm=imp.unit_to_mm, units_assumed=imp.units_assumed, info=info)
     except BaseException:
-        stored.path.unlink(missing_ok=True)         # whatever went wrong, do not leave a file nobody refers to
+        # whatever went wrong, do not leave a file nobody refers to (but never one a stored drawing refers to:
+        # an identical upload may have committed its row while this one failed)
+        if repo.drawing_by_stored_name(pid, stored.stored_name) is None:
+            stored.path.unlink(missing_ok=True)
         raise
 
 

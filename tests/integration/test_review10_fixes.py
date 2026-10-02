@@ -36,7 +36,7 @@ def test_u81a_scrubber_hides_whole_names_with_spaces_and_quotes(tmp_path):
         out = scrub(f"cannot read {root}/drawings/{n} (also '{n}')")
         assert "secret" not in out and "ZZ" not in out and "plan.dxf" not in out, out
     # a name that is no longer in the database: the pattern still stops at the extension, not at the first space
-    out = diagnostics.scrubber(tmp_path / "data")(f"x {root}/documents/old secret notes.docx failed")
+    out = diagnostics.scrubber(tmp_path / "data")(f"x {root}/projects/p_0123456789abcdef/documents/old secret notes.docx failed")
     assert "secret" not in out and "notes.docx" not in out, out        # hidden to the end of the line (R11)
 
 
