@@ -29,6 +29,7 @@ SRC_DIR = Path(__file__).resolve().parents[1]
 CANCEL_GRACE_SECONDS = 5.0
 POLL_SECONDS = 0.25
 DEFAULT_RUN_TIMEOUT = 1800.0   # seconds; last line of defence against a run that never ends
+DEFAULT_PROGRESS_TIMEOUT = 600.0   # seconds without any progress record, even though the process is alive
 DEFAULT_STALL_TIMEOUT = 60.0   # seconds without a heartbeat from a running worker (it writes one every ~0.3 s)
 LOG_RETENTION_DAYS = 30
 
@@ -90,10 +91,11 @@ def same_process(pid: int | None, create_time: float | None):
 
 class JobManager:
     def __init__(self, data_dir: str | Path, max_workers: int = 1, run_timeout: float | None = None,
-                 stall_timeout: float | None = None):
+                 stall_timeout: float | None = None, progress_timeout: float | None = None):
         self.events: list[dict] = []        # recent manager events (diagnostics)
         self.run_timeout = self._setting(run_timeout, "ERI_RUN_TIMEOUT", DEFAULT_RUN_TIMEOUT)
         self.stall_timeout = self._setting(stall_timeout, "ERI_STALL_TIMEOUT", DEFAULT_STALL_TIMEOUT)
+        self.progress_timeout = self._setting(progress_timeout, "ERI_PROGRESS_TIMEOUT", DEFAULT_PROGRESS_TIMEOUT)
         self.data_dir = Path(data_dir).resolve()
         self.db_path = self.data_dir / "eri.sqlite3"
         self.logs_dir = self.data_dir / "logs"
@@ -237,6 +239,14 @@ class JobManager:
                         error_message=self._stall_message(rid),
                         error_detail=_log_tail(t.log_path))
                     self._event("stalled", rid)
+                elif self._no_progress(rid, t):
+                    t.kill()
+                    self.repo.finish_run(
+                        rid, "failed", error_code="WORKER_NO_PROGRESS",
+                        error_message=f"分析超過 {self.progress_timeout:.0f} 秒沒有任何進度（程式仍在運算），已停止。"
+                                      "可能是圖面或規則過於龐大，請縮小範圍或簡化規則後重試。",
+                        error_detail=_log_tail(t.log_path))
+                    self._event("no_progress", rid)
                 elif now - t.started > self.run_timeout and t.exit_code() is None:
                     t.kill()
                     self.repo.finish_run(
@@ -259,6 +269,19 @@ class JobManager:
         hint = ("這通常是這條規則的比對規則（regex）太複雜，請簡化它。" if run.get("stage") == "rules"
                 else "請重新執行；若持續發生，請在診斷頁面匯出診斷資料。")
         return f"分析在「{label}{note}」超過 {self.stall_timeout:.0f} 秒沒有回應，已停止。{hint}"
+
+    def _no_progress(self, rid: str, t: Tracked) -> bool:
+        """Alive and beating, but no progress record in the database for a long time (an endless or
+        extremely slow pure-Python computation, which a heartbeat thread cannot reveal)."""
+        if t.exit_code() is not None:
+            return False
+        run = self.repo.get_run(rid)
+        if not run or run["status"] != "running" or not run.get("heartbeat_at"):
+            return False
+        try:
+            return time.time() - datetime.fromisoformat(run["heartbeat_at"]).timestamp() > self.progress_timeout
+        except ValueError:
+            return False
 
     def _stalled(self, rid: str, t: Tracked) -> bool:
         """A running worker that stopped writing heartbeats (hung inside one step) and is still alive."""

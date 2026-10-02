@@ -111,6 +111,7 @@ class RuleEvaluator:
         self.op = rule["operator"]
         self.value = float(rule["value"])
         self.margin = float(rule.get("warn_margin") or 0.0)
+        self._eligible: dict[tuple, tuple] = {}
         self.unit_mm = UNITS_TO_MM.get(self.unit, 1.0)
         self.mzh = MEASUREMENT_ZH.get(self.m, self.m)
 
@@ -415,9 +416,15 @@ class RuleEvaluator:
         """
         ctx = self.ctx
         ents = ctx.entities
-        eligible = [idxs for key, idxs in groups.items()
-                    if not pair_filter or P.match_pair(pair_filter, s, ents[idxs[0]])]
-        eligible_set = {i for idxs in eligible for i in idxs}
+        # a pair filter only looks at layer and system (predicate.PAIR_KEYS; a test pins that), so the set of
+        # eligible targets is the same for every subject of one (layer, system): compute it once per key
+        key = (s.layer.casefold(), (s.metadata.get("system") or "").casefold() or None)
+        cached = self._eligible.get(key)
+        if cached is None:
+            eligible = [idxs for idxs in groups.values()
+                        if not pair_filter or P.match_pair(pair_filter, s, ents[idxs[0]])]
+            cached = self._eligible[key] = (eligible, {i for idxs in eligible for i in idxs})
+        eligible, eligible_set = cached
         others = len(eligible_set) - (1 if sid in eligible_set else 0)
         reach = max(self.to_drawing_units(self.value), EPS)
         found: dict[int, tuple] = {}
@@ -438,9 +445,12 @@ class RuleEvaluator:
             handles, first = [], None
             for idxs in eligible:
                 for i in idxs:
-                    if i != sid and i not in found and i not in skipped:
-                        first = i if first is None else first
-                        handles.append(ents[i].handle)
+                    if i == sid or i in found or i in skipped:
+                        continue
+                    first = i if first is None else first
+                    handles.append(ents[i].handle)
+                    if len(handles) >= 20:                 # enough to show: never walk every target per subject
+                        break
                 if len(handles) >= 20:
                     break
             t = ents[first]

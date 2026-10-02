@@ -337,3 +337,44 @@ def test_manager_counts_the_heartbeat_file_as_a_sign_of_life(env, ef):
         assert m._stalled(r["id"], tr) is False                     # the side thread is still beating
     finally:
         m.stop()
+
+
+def test_no_progress_for_a_long_time_is_a_stall_even_while_the_process_beats(env, ef):
+    from datetime import datetime, timedelta, timezone
+    import psutil
+    p, d, rs = env.project_with_drawing([ef.line("SCADA", (0, 0), (1, 0))])
+    r = env.repo.create_run(p["id"], d, rs, None)
+    env.repo.claim_run(r["id"], os.getpid(), None)
+    m = M.JobManager(env.storage.data_dir, stall_timeout=60, progress_timeout=30)
+    try:
+        tr = M.Tracked(r["id"], os.getpid(), proc=psutil.Process(os.getpid()))
+        (m.logs_dir / f"{r['id']}.hb").touch()                       # the side thread is beating
+        env.conn.execute("UPDATE runs SET heartbeat_at = ? WHERE id = ?",
+                         ((datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat(), r["id"]))
+        assert m._no_progress(r["id"], tr) is False
+        env.conn.execute("UPDATE runs SET heartbeat_at = ? WHERE id = ?",
+                         ((datetime.now(timezone.utc) - timedelta(seconds=45)).isoformat(), r["id"]))
+        assert m._no_progress(r["id"], tr) is True and m._stalled(r["id"], tr) is False
+    finally:
+        m.stop()
+
+
+def test_all_within_cost_grows_slowly_with_many_subjects(ef):
+    """The rule stage for 'all' + <= must not be quadratic in the number of subjects (was 28 s at N=10000)."""
+    import time
+    from core.analysis.pipeline import run_analysis
+    from core.rules.schema import normalize_ruleset
+    rule = {"id": "R", "name": "r", "subject": {"system": "SCADA"}, "target": {"system": "POWER"},
+            "measurement": "distance", "operator": "<=", "value": 100, "quantifier": "all"}
+    rs = normalize_ruleset({"systems": [{"name": "SCADA", "layer_regex": "^SCADA"}, {"name": "POWER", "layer_regex": "^POWER"}],
+                            "rules": [rule]})
+
+    def rules_seconds(n):
+        ents = [ef.line("SCADA", (i * 300, 0), (i * 300 + 200, 0)) for i in range(n)]
+        ents += [ef.line("POWER", (i * 300, 50), (i * 300 + 200, 50)) for i in range(n)]
+        out = run_analysis(ents, rs, drawing_key="t.dxf")
+        return out.timings["rules"], out
+    t1, _ = rules_seconds(1000)
+    t2, out = rules_seconds(8000)
+    assert len(out.results) == 8000
+    assert t2 < max(t1, 0.05) * 30, (t1, t2)          # 8x the objects: quadratic would be ~64x

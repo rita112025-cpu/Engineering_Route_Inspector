@@ -134,3 +134,9 @@ def test_describe_requirement():
     z = normalize_rule({"id": "Z", "subject": {"layer_equals": "A"}, "zone": {"layer_equals": "Z"},
                         "measurement": "inside_zone"})
     assert describe_requirement(z) == "必須完全位於指定區域內"
+
+
+def test_pair_predicates_only_look_at_layer_and_system():
+    """engine._all_within groups targets by (layer, system) because a pair filter can see nothing else.
+    Adding a pair condition on another attribute must come with a change there: this test fails first."""
+    assert P.PAIR_KEYS == {"different_layer", "same_layer", "different_system", "same_system"}
