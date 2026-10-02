@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from persistence.db import connect
@@ -27,6 +28,8 @@ SRC_DIR = Path(__file__).resolve().parents[1]
 CANCEL_GRACE_SECONDS = 5.0
 POLL_SECONDS = 0.25
 DEFAULT_RUN_TIMEOUT = 1800.0   # seconds; last line of defence against a run that never ends
+DEFAULT_STALL_TIMEOUT = 300.0  # seconds without a heartbeat from a running worker (it writes one every ~0.3 s)
+LOG_RETENTION_DAYS = 30
 
 
 @dataclass
@@ -85,9 +88,12 @@ def same_process(pid: int | None, create_time: float | None):
 
 
 class JobManager:
-    def __init__(self, data_dir: str | Path, max_workers: int = 1, run_timeout: float | None = None):
+    def __init__(self, data_dir: str | Path, max_workers: int = 1, run_timeout: float | None = None,
+                 stall_timeout: float | None = None):
         self.run_timeout = float(run_timeout if run_timeout is not None
                                  else os.environ.get("ERI_RUN_TIMEOUT", DEFAULT_RUN_TIMEOUT))
+        self.stall_timeout = float(stall_timeout if stall_timeout is not None
+                                   else os.environ.get("ERI_STALL_TIMEOUT", DEFAULT_STALL_TIMEOUT))
         self.data_dir = Path(data_dir).resolve()
         self.db_path = self.data_dir / "eri.sqlite3"
         self.logs_dir = self.data_dir / "logs"
@@ -103,7 +109,22 @@ class JobManager:
         self.repo = Repo(self.conn)
 
     # -- lifecycle -----------------------------------------------------------
+    def prune_logs(self, days: int = LOG_RETENTION_DAYS) -> int:
+        """Delete worker logs of finished runs older than ``days``."""
+        cutoff = time.time() - days * 86400
+        active = {r["id"] for r in self.repo.active_runs()}
+        n = 0
+        for f in self.logs_dir.glob("run_*.log"):
+            try:
+                if f.stem not in active and f.stat().st_mtime < cutoff:
+                    f.unlink()
+                    n += 1
+            except OSError:
+                pass
+        return n
+
     def start(self) -> dict:
+        self.prune_logs()
         report = self.recover()
         self.thread = threading.Thread(target=self._loop, name="eri-job-manager", daemon=True)
         self.thread.start()
@@ -136,7 +157,9 @@ class JobManager:
         for run in self.repo.active_runs():
             if run["status"] != "running":
                 continue
-            proc = same_process(run["worker_pid"], run["worker_create_time"])
+            # without a recorded creation time a PID cannot be told apart from a reused one: do not adopt
+            ct = run["worker_create_time"]
+            proc = same_process(run["worker_pid"], ct) if ct is not None else None
             if proc is not None:
                 with self.lock:
                     self.tracked[run["id"]] = Tracked(run["id"], run["worker_pid"], proc=proc,
@@ -194,6 +217,14 @@ class JobManager:
             if t.cancel_seen is None:
                 if self.repo.cancel_requested(rid):
                     t.cancel_seen = now
+                elif self._stalled(rid, t):
+                    t.kill()
+                    self.repo.finish_run(
+                        rid, "failed", error_code="WORKER_STALLED",
+                        error_message=f"分析程序超過 {self.stall_timeout:.0f} 秒沒有回應而被停止。"
+                                      "可能是規則過於複雜，請簡化規則後重試。",
+                        error_detail=_log_tail(t.log_path))
+                    self._event("stalled", rid)
                 elif now - t.started > self.run_timeout and t.exit_code() is None:
                     t.kill()
                     self.repo.finish_run(
@@ -208,6 +239,19 @@ class JobManager:
                 self.repo.finish_run(rid, "cancelled", error_code="CANCELLED",
                                      error_message="使用者取消（分析程序未及時回應，已強制停止）")
                 self._event("killed", rid)
+
+    def _stalled(self, rid: str, t: Tracked) -> bool:
+        """A running worker that stopped writing heartbeats (hung inside one step) and is still alive."""
+        if t.exit_code() is not None:
+            return False
+        run = self.repo.get_run(rid)
+        if not run or run["status"] != "running" or not run.get("heartbeat_at"):
+            return False
+        try:
+            beat = datetime.fromisoformat(run["heartbeat_at"])
+        except ValueError:
+            return False
+        return (datetime.now(timezone.utc) - beat).total_seconds() > self.stall_timeout
 
     def _schedule(self) -> None:
         if self.stop_event.is_set():
@@ -229,11 +273,18 @@ class JobManager:
         env["PYTHONPATH"] = str(SRC_DIR) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         env["PYTHONIOENCODING"] = "utf-8"
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-        with open(log_path, "ab") as log:
-            popen = subprocess.Popen(
-                [sys.executable, "-m", "jobs.worker", "--data-dir", str(self.data_dir), "--run-id", run_id],
-                stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env, cwd=str(SRC_DIR),
-                creationflags=flags)
+        try:
+            with open(log_path, "ab") as log:
+                popen = subprocess.Popen(
+                    [sys.executable, "-m", "jobs.worker", "--data-dir", str(self.data_dir), "--run-id", run_id],
+                    stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env, cwd=str(SRC_DIR),
+                    creationflags=flags)
+        except (OSError, ValueError) as exc:       # missing interpreter, no handles/memory left, ...
+            self.repo.finish_run(run_id, "failed", error_code="WORKER_START_FAILED",
+                                 error_message="無法啟動分析程序，請查看診斷頁面或重新啟動程式。",
+                                 error_detail=f"{type(exc).__name__}: {exc}")
+            self._event("spawn_failed", run_id, repr(exc))
+            return
         self.tracked[run_id] = Tracked(run_id, popen.pid, popen=popen, log_path=log_path)
         self._event("spawned", run_id, f"pid={popen.pid}")
 

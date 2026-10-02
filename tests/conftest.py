@@ -17,8 +17,12 @@ _MARKERS = ("unit", "integration", "regression", "security", "performance")
 
 
 def pytest_collection_modifyitems(config, items):
+    tests_dir = Path(__file__).resolve().parent
     for item in items:
-        parts = Path(str(item.fspath)).parts
+        try:
+            parts = Path(str(item.fspath)).resolve().relative_to(tests_dir).parts[:-1]   # folders below tests/
+        except ValueError:
+            continue
         for name in _MARKERS:
             if name in parts:
                 item.add_marker(getattr(pytest.mark, name))

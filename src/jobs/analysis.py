@@ -13,6 +13,7 @@ from typing import Callable
 
 from core.analysis.issues import compare
 from core.analysis.pipeline import Cancelled, run_analysis
+from persistence.db import utcnow
 from persistence.repo import Repo
 
 PROGRESS_INTERVAL = 0.3   # seconds between progress writes
@@ -51,8 +52,8 @@ def make_hooks(repo: Repo, run_id: str) -> tuple[Callable[[str, float, str], Non
         if not state["cancelled"] and cancel_t.ready():
             state["cancelled"] = repo.cancel_requested(run_id)
             if not state["cancelled"]:
-                repo.conn.execute("UPDATE runs SET heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
-                                  "WHERE id = ? AND status = 'running'", (run_id,))
+                repo.conn.execute("UPDATE runs SET heartbeat_at = ? WHERE id = ? AND status = 'running'",
+                                  (utcnow(), run_id))
         return state["cancelled"]
 
     return progress, cancel_check
@@ -128,6 +129,8 @@ def execute_run(repo: Repo, run_id: str, *, progress=None, cancel_check=None) ->
         "routes_by_system": dict(sorted(by_system.items())),
         "routes": [dict(r, handles=r["handles"][:20]) for r in out.routes[:MAX_ROUTES_IN_SUMMARY]],
         "evidence_used": sorted(out.evidence_used),
+        # the evidence texts as they were during this run: exports stay reproducible after a document is deleted
+        "evidence_snapshot": {k: v.to_dict() for k, v in sorted(out.evidence_used.items())},
         "units_assumed": drawing["units_assumed"],
         "unit_to_mm": drawing["unit_to_mm"],
         "drawing": {"id": drawing["id"], "logical_name": drawing["logical_name"], "sha256": drawing["sha256"]},

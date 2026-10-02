@@ -136,11 +136,18 @@ def test_save_stream_hashes_and_dedupes(tmp_path):
         st.area(pid, "../other")
 
 
-def test_cleanup_partial_uploads(tmp_path):
+def test_cleanup_partial_uploads_only_removes_old_files(tmp_path):
+    import os
+    import time
     st = Storage(tmp_path / "data")
+    st.project_dir("p_0123456789abcdef", create=True)
     d = st.area("p_0123456789abcdef", "drawings")
-    (d / ".upload-abc.part").write_bytes(b"x")
+    old, fresh = d / ".upload-old.part", d / ".upload-new.part"
+    old.write_bytes(b"x")
+    fresh.write_bytes(b"x")
+    os.utime(old, (time.time() - 7200, time.time() - 7200))
     assert st.cleanup_partial_uploads() == 1
+    assert not old.exists() and fresh.exists()          # an upload in progress is never deleted
 
 
 # -- repository ----------------------------------------------------------------

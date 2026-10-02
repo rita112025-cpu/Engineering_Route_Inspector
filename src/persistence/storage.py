@@ -14,15 +14,21 @@ import re
 import secrets
 import shutil
 import tempfile
+import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Iterable
 
 ID_RE = re.compile(r"^[a-z]{1,4}_[0-9a-f]{16}$")
-_BAD_CHARS = re.compile(r'[\x00-\x1f\x7f<>:"/\\|?*]')
+_BAD_CHARS = re.compile(r'[<>:"/\\|?*]')
 _WIN_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
-MAX_NAME_LEN = 120
+# Unicode categories removed from names: controls (incl. C1), format characters such as the bidi
+# overrides U+202E, surrogates, private use, unassigned, line/paragraph separators
+_DROP_CATEGORIES = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}
+MAX_NAME_LEN = 100          # characters of a stored file name
+MAX_NAME_BYTES = 200        # UTF-8 bytes (file systems limit bytes: 255 on ext4/APFS)
+STORED_PREFIX_LEN = 13      # "<12 hex>_" in front of an uploaded file's name
 CHUNK = 1024 * 1024
 
 
@@ -44,21 +50,48 @@ def check_id(value: str) -> str:
     return value
 
 
-def safe_filename(name: str, default: str = "file") -> str:
-    """Reduce an uploaded file name to a plain, portable base name."""
+def _clip(text: str, max_chars: int, max_bytes: int) -> str:
+    text = text[:max_chars]
+    while len(text.encode("utf-8")) > max_bytes:
+        text = text[:-1]
+    return text
+
+
+def _safe_once(name: str, default: str, max_chars: int, max_bytes: int) -> str:
     name = unicodedata.normalize("NFC", str(name or ""))
-    name = re.split(r"[\\/]", name)[-1]          # drop any directory part (both separators)
+    name = re.split(r"[\\/]", name)[-1]                  # drop any directory part (both separators)
+    name = "".join("_" if unicodedata.category(ch) in _DROP_CATEGORIES else ch for ch in name)
     name = _BAD_CHARS.sub("_", name).strip().strip(".").strip()
     if not name:
         name = default
     stem, dot, ext = name.rpartition(".")
     if not dot:
         stem, ext = name, ""
-    if stem.split(".")[0].upper() in _WIN_RESERVED:
+    ext = ext[:16].strip()
+    if stem.split(".")[0].strip().upper() in _WIN_RESERVED:
         stem = "_" + stem
-    ext = ext[:16]
-    stem = stem[: MAX_NAME_LEN - len(ext) - 1] if ext else stem[:MAX_NAME_LEN]
+    room_chars = max_chars - (len(ext) + 1 if ext else 0)
+    room_bytes = max_bytes - (len(ext.encode("utf-8")) + 1 if ext else 0)
+    stem = _clip(stem, max(room_chars, 1), max(room_bytes, 1)).strip().rstrip(".")
+    if not stem:
+        stem = default
     return f"{stem}.{ext}" if ext else stem
+
+
+def safe_filename(name: str, default: str = "file", max_chars: int = MAX_NAME_LEN,
+                  max_bytes: int = MAX_NAME_BYTES) -> str:
+    """Reduce an uploaded file name to a plain, portable base name.
+
+    The result is idempotent (``safe_filename(safe_filename(x)) == safe_filename(x)``), which is what
+    ``Storage.file_path`` relies on to accept only names this function could have produced.
+    """
+    out = _safe_once(name, default, max_chars, max_bytes)
+    for _ in range(4):                                       # truncation can expose a new edge: settle
+        again = _safe_once(out, default, max_chars, max_bytes)
+        if again == out:
+            break
+        out = again
+    return out
 
 
 def resolve_inside(base: Path, *parts: str) -> Path:
@@ -106,14 +139,19 @@ class Storage:
         return p
 
     def area(self, project_id: str, area: str) -> Path:
+        """Folder of one storage area. The project folder must already exist (``project_dir(create=True)``)."""
         if area not in self.SUBDIRS:
             raise StorageError("未知的儲存區")
-        d = resolve_inside(self.project_dir(project_id), area)
-        d.mkdir(parents=True, exist_ok=True)
+        project = self.project_dir(project_id)
+        if not project.is_dir():
+            raise StorageError("專案資料夾不存在")
+        d = resolve_inside(project, area)
+        d.mkdir(exist_ok=True)
         return d
 
     def file_path(self, project_id: str, area: str, stored_name: str) -> Path:
-        if stored_name != safe_filename(stored_name):
+        if stored_name != safe_filename(stored_name, max_chars=MAX_NAME_LEN + STORED_PREFIX_LEN,
+                                        max_bytes=MAX_NAME_BYTES + STORED_PREFIX_LEN):
             raise StorageError("檔名格式錯誤")
         return resolve_inside(self.area(project_id, area), stored_name)
 
@@ -143,6 +181,8 @@ class Storage:
                     out.write(block)
             digest = h.hexdigest()
             stored = f"{digest[:12]}_{safe_filename(original_name)}"
+            if len(stored) > MAX_NAME_LEN + STORED_PREFIX_LEN:     # cannot happen; guards file_path's check
+                raise StorageError("檔名過長")
             final = resolve_inside(folder, stored)
             if final.exists() and sha256_file(final) == digest:
                 os.unlink(tmp)
@@ -164,13 +204,19 @@ class Storage:
         if p.exists():
             shutil.rmtree(p)
 
-    def cleanup_partial_uploads(self) -> int:
-        """Remove ``.upload-*.part`` leftovers from an interrupted process."""
+    def cleanup_partial_uploads(self, min_age_seconds: float = 3600.0) -> int:
+        """Remove ``.upload-*.part`` leftovers of interrupted uploads.
+
+        Only files older than ``min_age_seconds`` are removed, so a call made while the server is
+        running cannot delete an upload that is still in progress.
+        """
         n = 0
+        now = time.time()
         for p in self.projects_dir.glob("*/*/.upload-*.part"):
             try:
-                p.unlink()
-                n += 1
+                if now - p.stat().st_mtime >= min_age_seconds:
+                    p.unlink()
+                    n += 1
             except OSError:
                 pass
         return n

@@ -197,11 +197,11 @@ def test_pid_reuse_is_not_mistaken_for_worker(env):
 def test_worker_that_fails_before_claim_is_reported(env, ef, manager):
     p, d, rs = env.project_with_drawing(_clearance_drawing(ef))
     r = env.repo.create_run(p["id"], d, rs, None)
-    bad = subprocess.Popen([sys.executable, "-c", "import sys; print('boom'); sys.exit(3)"],
-                           stdout=open(env.storage.data_dir / "logs" / f"{r['id']}.log", "wb"),
-                           stderr=subprocess.STDOUT)
-    manager.tracked[r["id"]] = M.Tracked(r["id"], bad.pid, popen=bad,
-                                         log_path=env.storage.data_dir / "logs" / f"{r['id']}.log")
+    log_path = env.storage.data_dir / "logs" / f"{r['id']}.log"
+    with open(log_path, "wb") as log:
+        bad = subprocess.Popen([sys.executable, "-c", "import sys; print('boom'); sys.exit(3)"],
+                               stdout=log, stderr=subprocess.STDOUT)
+    manager.tracked[r["id"]] = M.Tracked(r["id"], bad.pid, popen=bad, log_path=log_path)
     bad.wait()
     manager.tick()
     run = _status(env, r["id"])

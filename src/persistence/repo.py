@@ -12,6 +12,7 @@ from typing import Any, Iterable, Sequence
 
 from core.models.entities import GeometryEntity
 from core.models.results import EvidenceChunk, RuleResult
+from core.rules.schema import normalize_ruleset
 from core.version import SOFTWARE_VERSION
 from .db import transaction, utcnow
 from .storage import new_id
@@ -98,6 +99,12 @@ class Repo:
                     info: dict) -> dict:
         did = new_id("d")
         with transaction(self.conn):
+            same = self.one("SELECT id FROM drawings WHERE project_id = ? AND stored_name = ?",
+                            (project_id, stored_name))
+            if same:      # identical file (same content and name) imported again: keep the first import
+                existing = self.get_drawing(same["id"])
+                existing["already_imported"] = True
+                return existing
             self.conn.execute(
                 "INSERT INTO drawings(id, project_id, logical_name, stored_name, sha256, size_bytes, imported_at, "
                 "entity_count, unit_to_mm, units_assumed, info_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -165,6 +172,12 @@ class Repo:
                      chunks: Sequence[EvidenceChunk], warnings: list[str], document_id: str | None = None) -> dict:
         doc_id = document_id or new_id("doc")
         with transaction(self.conn):
+            same = self.one("SELECT id FROM documents WHERE project_id = ? AND stored_name = ?",
+                            (project_id, stored_name))
+            if same:
+                existing = self.get_document(same["id"])
+                existing["already_imported"] = True
+                return existing
             self.conn.execute(
                 "INSERT INTO documents(id, project_id, filename, stored_name, kind, sha256, size_bytes, imported_at, "
                 "chunk_count, warnings_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -219,7 +232,8 @@ class Repo:
                 "systems": json.loads(s["systems_json"]) if s else [], "rules": rules}
 
     def save_ruleset(self, project_id: str, ruleset: dict, operation: str = "rules.save") -> None:
-        """Replace the project's systems and rules (ruleset must already be normalized)."""
+        """Validate (``RuleError`` on problems) and replace the project's systems and rules."""
+        ruleset = normalize_ruleset(ruleset)
         now = utcnow()
         with transaction(self.conn):
             self.conn.execute("INSERT INTO project_settings(project_id, systems_json) VALUES (?, ?) "
@@ -238,6 +252,12 @@ class Repo:
     # -- runs ----------------------------------------------------------------
     def create_run(self, project_id: str, drawing: dict, ruleset: dict, baseline_run_id: str | None,
                    index_kind: str = "grid") -> dict:
+        if drawing.get("project_id") != project_id:
+            raise ValueError("圖面不屬於這個專案")
+        if baseline_run_id:
+            base = self.get_run(baseline_run_id)
+            if base is None or base["project_id"] != project_id:
+                raise ValueError("基準分析不屬於這個專案")
         rid = new_id("run")
         with transaction(self.conn):
             self.conn.execute(

@@ -90,8 +90,9 @@ def build_report(repo: Repo, run_id: str) -> Report:
         raise ExportError("這次分析所屬的專案或圖面已被刪除。")
     issues = repo.all_issues(run_id)
     evidence = {}
+    snapshot = (run["summary"] or {}).get("evidence_snapshot", {})
     for eid in sorted({i["evidence_id"] for i in issues if i["evidence_id"]}):
-        row = repo.get_evidence(project["id"], eid)
+        row = snapshot.get(eid) or repo.get_evidence(project["id"], eid)
         if row:
             evidence[eid] = row
     rules = {r["id"]: r for r in repo.run_ruleset(run_id).get("rules", [])}

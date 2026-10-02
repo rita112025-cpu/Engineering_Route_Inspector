@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -46,7 +47,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
 
     WAL lets the UI server read while the analysis worker writes;
     foreign keys are off by default in SQLite and must be enabled per
-    connection.
+    connection. A connection must not be used by two threads at once
+    (transactions would interleave): give each thread its own, e.g. via
+    ``Database``, or serialise access with a lock.
     """
     conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000, isolation_level=None,
                            check_same_thread=False)
@@ -98,28 +101,55 @@ def applied_migrations(conn: sqlite3.Connection) -> dict[int, sqlite3.Row]:
     return {r["version"]: r for r in conn.execute("SELECT * FROM schema_migrations ORDER BY version")}
 
 
+def split_statements(sql: str) -> Iterator[str]:
+    """Split a SQL script into complete statements (comments and quoted semicolons handled by SQLite)."""
+    buf = ""
+    for line in sql.splitlines(keepends=True):
+        buf += line
+        if sqlite3.complete_statement(buf):
+            if any(l.strip() and not l.strip().startswith("--") for l in buf.splitlines()):
+                yield buf.strip()
+            buf = ""
+    if any(l.strip() and not l.strip().startswith("--") for l in buf.splitlines()):
+        yield buf.strip()
+
+
 def migrate(conn: sqlite3.Connection, directory: Path = MIGRATIONS_DIR) -> list[int]:
-    """Apply pending migrations. Returns the versions applied by this call."""
+    """Apply pending migrations. Returns the versions applied by this call.
+
+    Safe against concurrent callers (server and worker starting together): each migration runs in
+    ``BEGIN IMMEDIATE`` and the "already applied?" check is made *after* the write lock is held, so a
+    process that lost the race sees the finished migration and skips it.
+    """
     migrations = load_migrations(directory)
     known = {m.version: m for m in migrations}
-    applied = applied_migrations(conn)
-    for version, row in applied.items():
-        if version not in known:
-            raise MigrationError(f"資料庫的 schema 版本 {version:03d} 比目前程式新，請更新程式後再開啟。")
-        if row["checksum"] != known[version].checksum:
-            raise MigrationError(f"migration {version:03d}_{row['name']} 在套用後被修改（checksum 不符）。")
+    _ensure_table(conn)
     done: list[int] = []
+
+    def verify_applied() -> dict[int, sqlite3.Row]:
+        applied = {r["version"]: r for r in conn.execute("SELECT * FROM schema_migrations ORDER BY version")}
+        for version, row in applied.items():
+            if version not in known:
+                raise MigrationError(f"資料庫的 schema 版本 {version:03d} 比目前程式新，請更新程式後再開啟。")
+            if row["checksum"] != known[version].checksum:
+                raise MigrationError(f"migration {version:03d}_{row['name']} 在套用後被修改（checksum 不符）。")
+        return applied
+
+    verify_applied()
     for m in migrations:
-        if m.version in applied:
-            continue
-        # executescript() commits any open transaction first, then runs the
-        # script as written, so BEGIN/COMMIT inside the script make the
-        # migration and its bookkeeping row atomic.
-        script = (f"BEGIN IMMEDIATE;\n{m.sql}\n;"
-                  f"INSERT INTO schema_migrations(version, name, checksum, applied_at) "
-                  f"VALUES ({m.version}, '{m.name}', '{m.checksum}', '{utcnow()}');\nCOMMIT;")
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.executescript(script)
+            if m.version in verify_applied():          # another process applied it while we waited
+                conn.execute("COMMIT")
+                continue
+            for stmt in split_statements(m.sql):
+                conn.execute(stmt)
+            conn.execute("INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?,?,?,?)",
+                         (m.version, m.name, m.checksum, utcnow()))
+            conn.execute("COMMIT")
+        except MigrationError:
+            conn.execute("ROLLBACK")
+            raise
         except sqlite3.Error as exc:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
@@ -139,3 +169,46 @@ def open_database(path: str | Path) -> sqlite3.Connection:
     conn = connect(path)
     migrate(conn)
     return conn
+
+
+class Database:
+    """One SQLite connection per thread, all opened on the same migrated database file.
+
+    The API server handles requests on a thread pool; each request thread calls ``repo()`` and gets
+    a connection no other thread uses.
+    """
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._local = threading.local()
+        self._all: list[sqlite3.Connection] = []
+        self._lock = threading.Lock()
+        boot = open_database(self.path)
+        boot.close()
+
+    def conn(self) -> sqlite3.Connection:
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            c = connect(self.path)
+            self._local.conn = c
+            with self._lock:
+                self._all.append(c)
+        return c
+
+    def repo(self):
+        from .repo import Repo
+        r = getattr(self._local, "repo", None)
+        if r is None or r.conn is not self.conn():
+            r = Repo(self.conn())
+            self._local.repo = r
+        return r
+
+    def close(self) -> None:
+        with self._lock:
+            for c in self._all:
+                try:
+                    c.close()
+                except sqlite3.Error:
+                    pass
+            self._all.clear()
+        self._local = threading.local()
