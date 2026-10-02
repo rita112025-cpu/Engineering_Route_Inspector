@@ -147,6 +147,11 @@ class Repo:
             e.source_file = src["logical_name"] if src else ""
         return out
 
+    def drawing_extent(self, did: str) -> tuple[float, float, float, float] | None:
+        r = self.conn.execute("SELECT MIN(minx), MIN(miny), MAX(maxx), MAX(maxy) FROM entities WHERE drawing_id = ?",
+                              (did,)).fetchone()
+        return tuple(r) if r and r[0] is not None else None
+
     def entity_rows(self, did: str) -> list[dict]:
         """Compact geometry for the viewer."""
         return [{"handle": r["handle"], "layer": r["layer"], "type": r["entity_type"],
