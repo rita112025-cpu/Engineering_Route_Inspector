@@ -18,6 +18,13 @@ from .db import transaction, utcnow
 from .storage import new_id
 
 RUN_ACTIVE = ("queued", "running")
+
+
+class RunInProgress(Exception):
+    def __init__(self, run_id: str):
+        super().__init__(run_id)
+        self.run_id = run_id
+
 RUN_FINAL = ("completed", "failed", "cancelled")
 ISSUE_SORT = {
     "severity": "CASE status WHEN 'FAIL' THEN 0 WHEN 'WARNING' THEN 1 WHEN 'UNKNOWN' THEN 2 ELSE 3 END, rule_id, seq",
@@ -271,7 +278,9 @@ class Repo:
 
     # -- runs ----------------------------------------------------------------
     def create_run(self, project_id: str, drawing: dict, ruleset: dict, baseline_run_id: str | None,
-                   index_kind: str = "grid") -> dict:
+                   index_kind: str = "grid", exclusive: bool = False) -> dict:
+        """Create a queued run. With ``exclusive`` the "no other active run on this drawing" check and the
+        insert happen in one write transaction, so two simultaneous requests cannot both succeed."""
         if drawing.get("project_id") != project_id:
             raise ValueError("圖面不屬於這個專案")
         if baseline_run_id:
@@ -280,6 +289,11 @@ class Repo:
                 raise ValueError("基準分析不屬於這個專案")
         rid = new_id("run")
         with transaction(self.conn):
+            if exclusive:
+                busy = self.one("SELECT id FROM runs WHERE drawing_id = ? AND status IN ('queued','running') LIMIT 1",
+                                (drawing["id"],))
+                if busy:
+                    raise RunInProgress(busy["id"])
             self.conn.execute(
                 "INSERT INTO runs(id, project_id, drawing_id, status, stage, progress, created_at, software_version, "
                 "drawing_sha256, ruleset_json, ruleset_sha256, baseline_run_id, index_kind) "

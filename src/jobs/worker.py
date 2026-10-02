@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import threading
 import traceback
 from pathlib import Path
 
@@ -33,14 +34,43 @@ def process_create_time(pid: int) -> float | None:
         return None
 
 
+HEARTBEAT_SECONDS = 2.0
+
+
+def heartbeat_path(data_dir: Path, run_id: str) -> Path:
+    return data_dir / "logs" / f"{run_id}.hb"
+
+
+def start_heartbeat(path: Path, stop: threading.Event) -> threading.Thread:
+    """Touch ``path`` every couple of seconds from a side thread.
+
+    A file (not the database) so it keeps beating while one long database write holds the lock, yet it
+    stops when the main thread is stuck inside a C call that never releases the GIL (a runaway regex):
+    the job manager treats a silent heartbeat as a stall.
+    """
+    def beat():
+        while not stop.is_set():
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            except OSError:
+                pass
+            stop.wait(HEARTBEAT_SECONDS)
+    t = threading.Thread(target=beat, name="eri-heartbeat", daemon=True)
+    t.start()
+    return t
+
+
 def run_worker(db_path: Path, run_id: str) -> int:
     conn = connect(db_path)
     repo = Repo(conn)
+    stop = threading.Event()
     try:
         if not repo.claim_run(run_id, os.getpid(), process_create_time(os.getpid())):
             print(f"run {run_id}: not claimable (already started, cancelled or deleted)", flush=True)
             return 0
         print(f"run {run_id}: started pid={os.getpid()}", flush=True)
+        start_heartbeat(heartbeat_path(db_path.parent, run_id), stop)
         try:
             summary = execute_run(repo, run_id)
         except Cancelled:
@@ -64,6 +94,7 @@ def run_worker(db_path: Path, run_id: str) -> int:
         print(f"run {run_id}: completed {summary['counts']}", flush=True)
         return 0
     finally:
+        stop.set()
         conn.close()
 
 

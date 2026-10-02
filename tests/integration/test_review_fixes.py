@@ -287,3 +287,53 @@ def test_hung_worker_is_reported_with_the_rule_that_hung(env, ef):
         assert "執行規則：HANG" in run["error_message"] and "regex" in run["error_message"]
     finally:
         m.stop()
+
+
+def test_exclusive_create_run_is_atomic_under_concurrency(env, ef):
+    """Eight simultaneous requests for one drawing: exactly one run is created."""
+    import threading
+    from persistence.repo import Repo, RunInProgress
+    p, d, rs = env.project_with_drawing([ef.line("SCADA", (0, 0), (1, 0))])
+    results = []
+
+    def go():
+        repo = Repo(DB.connect(env.storage.db_path))
+        try:
+            results.append(repo.create_run(p["id"], d, rs, None, exclusive=True)["id"])
+        except RunInProgress:
+            results.append("busy")
+    ts = [threading.Thread(target=go) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert sorted(r == "busy" for r in results) == [False] + [True] * 7, results
+
+
+def test_heartbeat_thread_touches_its_file_and_stops(tmp_path):
+    import threading
+    from jobs import worker as W
+    path = tmp_path / "logs" / "run_0123456789abcdef.hb"
+    stop = threading.Event()
+    t = W.start_heartbeat(path, stop)
+    _wait(lambda: path.exists())
+    first = path.stat().st_mtime
+    stop.set()
+    t.join(5)
+    assert not t.is_alive() and first > 0
+
+
+def test_manager_counts_the_heartbeat_file_as_a_sign_of_life(env, ef):
+    """A worker silent in the database but still beating (long write) is not called stalled."""
+    from datetime import datetime, timedelta, timezone
+    p, d, rs = env.project_with_drawing([ef.line("SCADA", (0, 0), (1, 0))])
+    r = env.repo.create_run(p["id"], d, rs, None)
+    env.repo.claim_run(r["id"], os.getpid(), None)
+    old = (datetime.now(timezone.utc) - timedelta(seconds=500)).isoformat()
+    env.conn.execute("UPDATE runs SET heartbeat_at = ? WHERE id = ?", (old, r["id"]))
+    m = M.JobManager(env.storage.data_dir, stall_timeout=60)
+    try:
+        tr = M.Tracked(r["id"], os.getpid(), proc=__import__("psutil").Process(os.getpid()))
+        assert m._stalled(r["id"], tr) is True                      # silent everywhere
+        (m.logs_dir / f"{r['id']}.hb").touch()
+        assert m._stalled(r["id"], tr) is False                     # the side thread is still beating
+    finally:
+        m.stop()

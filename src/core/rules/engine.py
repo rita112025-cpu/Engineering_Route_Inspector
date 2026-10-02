@@ -17,6 +17,7 @@ from . import predicate as P
 from .schema import MEASUREMENT_ZH, UNITS_TO_MM, describe_requirement
 
 EPS = 1e-6
+WITHIN_MEASUREMENTS = {"distance", "minimum_distance", "horizontal_clearance"}
 
 
 class Cancelled(Exception):
@@ -344,13 +345,21 @@ class RuleEvaluator:
         target_pred = rule["target"]
         allow_text = P.explicitly_mentions_text(target_pred)
         target_flag = [((e.is_geometric or allow_text) and P.match_entity(target_pred, e)) for e in ctx.entities]
-        target_total = sum(target_flag)
-        any_target = target_total > 0
+        any_target = any(target_flag)
         pair_filter = rule.get("pair_filter") or None
         radius = self._search_radius()
         quant = rule.get("quantifier", "all")
         emitted: set[frozenset] = set()
         out: list[RuleResult] = []
+        # "every target within X" for distances is answered with the spatial index (see _all_within);
+        # targets are grouped by (layer, system) because that is all a pair filter can look at
+        within_mode = quant == "all" and self.op in ("<=", "<") and self.m in WITHIN_MEASUREMENTS
+        groups: dict[tuple, list[int]] = {}
+        if within_mode:
+            for i, flag in enumerate(target_flag):
+                if flag:
+                    e = ctx.entities[i]
+                    groups.setdefault((e.layer.casefold(), (e.metadata.get("system") or "").casefold() or None), []).append(i)
         for s in subjects:
             self._check()
             if not any_target:
@@ -364,8 +373,8 @@ class RuleEvaluator:
                                            "無目標物件"))
                 continue
             sid = ctx.pos[id(s)]
-            if quant == "all" and self.op in ("<=", "<") and not pair_filter:
-                out.append(self._all_within(s, sid, target_flag, target_total))
+            if within_mode:
+                out.append(self._all_within(s, sid, target_flag, groups, pair_filter))
                 continue
             evals = []
             for idx in ctx.index.query(expand_bbox(s.bbox, radius)):
@@ -396,42 +405,51 @@ class RuleEvaluator:
             r.fix = self.fix_text(v, label(s), label(t) if t is not None else "")
         return r
 
-    def _all_within(self, s, sid, target_flag, target_total) -> RuleResult:
+    def _all_within(self, s, sid, target_flag, groups, pair_filter) -> RuleResult:
         """"Every target must be within X" without comparing each subject with each target.
 
-        The spatial index returns the targets inside X (+ margin); a target outside that window violates
-        the rule, so the violation count is ``targets - found`` and only one violator is measured.
-        One result per subject.
+        The spatial index returns the targets inside X; every eligible target outside that window violates
+        the rule, so the violation count is ``eligible - found`` and only one violator is measured (the first
+        in drawing order). A pair filter only looks at layer and system, so eligibility is decided once per
+        (layer, system) group. One result per subject.
         """
         ctx = self.ctx
+        ents = ctx.entities
+        eligible = [idxs for key, idxs in groups.items()
+                    if not pair_filter or P.match_pair(pair_filter, s, ents[idxs[0]])]
+        eligible_set = {i for idxs in eligible for i in idxs}
+        others = len(eligible_set) - (1 if sid in eligible_set else 0)
         reach = max(self.to_drawing_units(self.value), EPS)
         found: dict[int, tuple] = {}
+        skipped: set[int] = set()                          # inside the window but not comparable (other level)
         for idx in ctx.index.query(expand_bbox(s.bbox, reach)):
-            if idx == sid or not target_flag[idx]:
+            if idx == sid or idx not in eligible_set:
                 continue
-            t = ctx.entities[idx]
+            t = ents[idx]
             pv = self.pair_value(s, t, reach)
             if pv is None:
-                continue                                   # inside the window's corner, but farther than X
+                if entity_distance(s, t, reach).distance <= reach + EPS:
+                    skipped.add(idx)                       # e.g. different elevations: not part of the comparison
+                continue                                   # otherwise farther than X (window corner)
             kind, v, dr, why = pv
             found[idx] = ("UNKNOWN" if kind == "unknown" else self.classify_value(v), t, v, dr, why)
-        others = target_total - (1 if target_flag[sid] else 0)
-        far = others - len(found)
+        far = others - len(found) - len(skipped)
         if far > 0:
             handles, first = [], None
-            for i, flag in enumerate(target_flag):
-                if flag and i != sid and i not in found:
-                    first = first if first is not None else i
-                    handles.append(ctx.entities[i].handle)
-                    if len(handles) >= 20:
-                        break
-            t = ctx.entities[first]
+            for idxs in eligible:
+                for i in idxs:
+                    if i != sid and i not in found and i not in skipped:
+                        first = i if first is None else first
+                        handles.append(ents[i].handle)
+                if len(handles) >= 20:
+                    break
+            t = ents[first]
             dr = entity_distance(s, t)
             v = self.to_rule_units(dr.distance)
             res = self._pair_result(self.classify_value(v), s, t, v, dr, "2D 平面最短距離")
-            res.details["violations"] = {"count": far, "handles": handles}
+            res.details["violations"] = {"count": far, "handles": handles[:20]}
             if far > 1:
-                res.message += f"（另有 {far - 1} 個目標同樣不符）"
+                res.message += f"（另有 {far - 1} 個目標同樣不符；這裡列出的是圖面順序中的第一個）"
             return res
         evals = list(found.values())
         collapsed = self._collapse_upper_bound(s, evals)
@@ -561,7 +579,7 @@ def apply_confidence(results: list[RuleResult], rule: dict, evidence: EvidenceCh
                 reasons.append("圖面未宣告單位（$INSUNITS），以 mm 推定")
             r.confidence = "CONFIRMED" if not reasons else "INFERRED"
             if not reasons:
-                reasons.append("規則、量測與規範證據皆可追溯")
+                reasons.append("規範原文含相同的數值與單位（比較方向與適用對象仍需人工確認）")
         r.details["confidence_reasons"] = reasons
 
 

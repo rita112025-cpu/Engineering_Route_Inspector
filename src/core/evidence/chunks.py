@@ -94,9 +94,9 @@ _UNIT_WORDS = {
     "°": "deg", "度": "deg", "deg": "deg", "degree": "deg", "degrees": "deg",
 }
 _QTY_RE = re.compile(
-    r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*("
+    r"(?<![\d.])(?<!\d,)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*("
     + "|".join(re.escape(w) for w in sorted(_UNIT_WORDS, key=len, reverse=True))
-    + r")(?![A-Za-z0-9²³])", re.IGNORECASE)
+    + r")(?![A-Za-z0-9²³/^·×])", re.IGNORECASE)
 
 
 def quantities_in(text: str) -> list[tuple[float, str, str]]:
@@ -106,8 +106,13 @@ def quantities_in(text: str) -> list[tuple[float, str, str]]:
     support a length or an angle.
     """
     t = unicodedata.normalize("NFKC", text or "")
-    return [(float(m.group(1).replace(",", "")), _UNIT_WORDS[m.group(2).lower()], m.group(0))
-            for m in _QTY_RE.finditer(t)]
+    out = []
+    for m in _QTY_RE.finditer(t):
+        unit = _UNIT_WORDS[m.group(2).lower()]
+        if unit == "in" and re.match(r"\s+[A-Za-z]", t[m.end():]):     # "300 in the drawing", not inches
+            continue
+        out.append((float(m.group(1).replace(",", "")), unit, m.group(0)))
+    return out
 
 
 def _inside_larger_number(nt: str, start: int, end: int) -> bool:

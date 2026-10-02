@@ -208,6 +208,7 @@ class JobManager:
             if code is None:
                 continue
             del self.tracked[rid]
+            (self.logs_dir / f"{rid}.hb").unlink(missing_ok=True)
             run = self.repo.get_run(rid)
             if run is None or run["status"] not in ("queued", "running"):
                 self._event("exited", rid, f"code={code}")
@@ -267,10 +268,14 @@ class JobManager:
         if not run or run["status"] != "running" or not run.get("heartbeat_at"):
             return False
         try:
-            beat = datetime.fromisoformat(run["heartbeat_at"])
+            beat = datetime.fromisoformat(run["heartbeat_at"]).timestamp()
         except ValueError:
             return False
-        return (datetime.now(timezone.utc) - beat).total_seconds() > self.stall_timeout
+        try:                                                # the worker's side-thread heartbeat file, if newer
+            beat = max(beat, (self.logs_dir / f"{rid}.hb").stat().st_mtime)
+        except OSError:
+            pass
+        return time.time() - beat > self.stall_timeout
 
     def _schedule(self) -> None:
         if self.stop_event.is_set():

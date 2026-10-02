@@ -27,6 +27,7 @@ from importers import pdf as pdf_importer
 from importers import text as text_importer
 from importers.dxf import DrawingImportError, load_dxf
 from persistence.db import schema_version
+from persistence.repo import RunInProgress
 from persistence.storage import StorageError, check_id, new_id, safe_filename
 from . import templates
 from .errors import ApiError, bad_request, not_found
@@ -434,9 +435,6 @@ async def start_run(request: Request):
         rs = repo.get_ruleset(p["id"])
         if not any(r.get("enabled", True) for r in rs["rules"]):
             raise bad_request("還沒有可用的規則。請先匯入規範並建立規則，或載入示範專案。", "NO_RULES")
-        for r in repo.active_runs():
-            if r["drawing_id"] == d["id"]:
-                raise ApiError(409, "RUN_IN_PROGRESS", "這份圖面已經有分析進行中。", run=run_view(repo.get_run(r["id"])))
         base = body.get("baseline_run_id", "auto")
         if base == "auto":
             prev = repo.latest_completed_run(p["id"], d["logical_name"])
@@ -444,7 +442,9 @@ async def start_run(request: Request):
         elif base is not None and not isinstance(base, str):
             raise bad_request("基準分析格式錯誤。")
         try:
-            run = repo.create_run(p["id"], d, rs, base)
+            run = repo.create_run(p["id"], d, rs, base, exclusive=True)
+        except RunInProgress as busy:
+            raise ApiError(409, "RUN_IN_PROGRESS", "這份圖面已經有分析進行中。", run=run_view(repo.get_run(busy.run_id))) from None
         except ValueError as exc:
             raise bad_request(str(exc)) from None
         st.manager.wake()
