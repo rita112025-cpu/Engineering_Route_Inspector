@@ -1,0 +1,13 @@
+* text=auto
+# Windows batch files are stored with CRLF bytes as-is, so a ZIP download or any checkout keeps them valid.
+*.bat -text
+*.cmd -text
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+# DXF drawings are stored byte for byte: the program records a SHA-256 of the original file.
+*.dxf -text

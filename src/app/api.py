@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections import Counter
 from typing import Any
 
@@ -29,7 +30,7 @@ from importers.dxf import DrawingImportError, load_dxf
 from persistence.db import schema_version
 from persistence.repo import RunInProgress
 from persistence.storage import StorageError, check_id, new_id, safe_filename
-from . import templates
+from . import diagnostics, templates
 from .errors import ApiError, bad_request, not_found
 from .state import AppState
 
@@ -117,6 +118,25 @@ def health(request: Request):
     return JSONResponse({"status": "ok", "version": SOFTWARE_VERSION,
                          "schema_version": schema_version(st.repo().conn),
                          "job_manager": st.manager.status()["alive"]})
+
+
+# ---- diagnostics -----------------------------------------------------------------------------------
+
+def _diagnose(request: Request) -> dict:
+    st = S(request)
+    return diagnostics.collect(st.config.data_dir, conn=st.db.conn(), manager_status=st.manager.status(),
+                               recovery=st.recovery, started_at=st.started_at)
+
+
+def get_diagnostics(request: Request):
+    return JSONResponse(_diagnose(request))
+
+
+def diagnostics_bundle(request: Request):
+    st = S(request)
+    data = diagnostics.build_bundle(st.config.data_dir, _diagnose(request))
+    name = f"eri-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": _attachment(name)})
 
 
 # ---- demo -------------------------------------------------------------------------------------------
@@ -545,6 +565,8 @@ def download_export(request: Request):
 
 ROUTES = [
     Route("/api/health", health),
+    Route("/api/diagnostics", get_diagnostics),
+    Route("/api/diagnostics/bundle", diagnostics_bundle),
     Route("/api/demo", load_demo_project, methods=["POST"]),
     Route("/api/projects", list_projects, methods=["GET"]),
     Route("/api/projects", create_project, methods=["POST"]),

@@ -71,3 +71,21 @@ def test_loading_the_demo_twice_just_switches(ui):
     page.wait_for_function("() => [...document.querySelectorAll('.toast .msg')].some(t => t.textContent.includes('已經存在'))")
     assert page.locator("#project-select option").count() == 2          # "my project" + one demo, never two demos
     assert errors == [], errors
+
+
+def test_diagnostics_dialog(ui):
+    page, srv, errors = ui
+    page.goto(srv.base + "/")
+    page.wait_for_selector("#project-select option", state="attached")
+    page.click("#diag-open")
+    page.wait_for_selector("#diag-dialog[open]")
+    assert page.inner_text("#diag-summary") == "一切正常"
+    body = page.inner_text("#diag-body")
+    for needle in ("資料庫完整性", "背景分析程式運作中", "程式版本", "ezdxf"):
+        assert needle in body, needle
+    assert str(srv.config.data_dir.resolve()) not in body
+    href = page.get_attribute("#diag-download", "href")
+    assert href == "/api/diagnostics/bundle"
+    page.click("#diag-close")
+    page.wait_for_selector("#diag-dialog", state="hidden")
+    shot(page, "diag-dialog")

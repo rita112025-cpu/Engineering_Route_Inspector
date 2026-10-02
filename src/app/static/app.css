@@ -195,3 +195,6 @@ details.adv { margin-top: 16px; } details.adv summary { cursor: pointer; color: 
 
 .topbar-actions { margin-left: auto; }
 .empty-note { text-align: center; line-height: 2; }
+.diag-checks { list-style: none; margin: 4px 0 12px; padding: 0; }
+.diag-checks li { padding: 3px 0; } .diag-checks li.ok b { color: var(--pass); } .diag-checks li.bad b { color: var(--fail); }
+.logtail { background: var(--panel-2); padding: 8px 10px; border-radius: 6px; overflow: auto; max-height: 220px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }

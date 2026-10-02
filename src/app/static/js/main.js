@@ -429,6 +429,8 @@ function bind() {
     store.set("eri.project", "");
     await loadProjects();
   }));
+  $("#diag-open").addEventListener("click", guard(openDiagnostics));
+  $("#diag-close").addEventListener("click", () => $("#diag-dialog").close());
   $("#demo-load").addEventListener("click", guard(async () => {
     const out = await api.post("/api/demo");
     toast(out.created ? "已載入示範專案。接著按左側的「開始分析」。" : "示範專案已經存在，已切換過去。");
@@ -463,6 +465,30 @@ function bind() {
     await selectIssue(app.issues[next].issue_id);
   }));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !document.querySelector("dialog[open]")) deselect(); });
+}
+
+async function openDiagnostics() {
+  const d = await api.get("/api/diagnostics");
+  const body = clear($("#diag-body"));
+  body.append(
+    el("h3", { id: "diag-summary" }, d.healthy ? "一切正常" : "有項目需要注意"),
+    el("ul", { class: "diag-checks" }, d.checks.map((c) => el("li", { class: c.ok ? "ok" : "bad" },
+      el("b", {}, c.ok ? "正常　" : "問題　"), c.name, c.detail ? `：${c.detail}` : ""))),
+    el("h3", {}, "環境"),
+    el("table", { class: "kv" }, el("tbody", {},
+      row("程式版本", d.software_version), row("Python", d.python), row("系統", d.platform),
+      row("資料庫版本", d.schema_version != null ? String(d.schema_version) : null),
+      row("資料量", d.counts ? Object.entries(d.counts).map(([k, v]) => `${k} ${v}`).join("、") : null),
+      row("磁碟剩餘", d.disk_free_mb != null ? `${d.disk_free_mb} MB` : null),
+      row("資料夾大小", d.data_size_mb != null ? `${d.data_size_mb} MB` : null),
+      row("套件", Object.entries(d.packages).map(([k, v]) => `${k} ${v ?? "未安裝"}`).join("、")))),
+    el("h3", {}, "最近失敗的分析"),
+    d.recent_failed_runs?.length
+      ? el("ul", {}, d.recent_failed_runs.map((r) => el("li", {}, `${r.created_at.slice(0, 19)}　${r.code ?? ""}　${r.message}`)))
+      : el("p", { class: "hint" }, "沒有。"),
+    el("h3", {}, "最近的程式記錄"),
+    el("pre", { class: "logtail" }, d.log_tail.slice(-25).join("\n") || "（還沒有記錄）"));
+  $("#diag-dialog").showModal();
 }
 
 async function refreshRules() {

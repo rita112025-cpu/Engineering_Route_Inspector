@@ -23,6 +23,7 @@
       <button type="button" class="btn small danger" id="project-delete">刪除專案</button>
     </div>
     <div class="topbar-actions" id="topbar-actions">
+      <button type="button" class="btn" id="diag-open">診斷</button>
       <button type="button" class="btn" id="demo-load" title="載入內建的範例圖面、規範與規則，立刻試用">載入示範專案</button>
     </div>
   </header>
@@ -120,6 +121,14 @@
   <div class="dlg-foot"><span class="errors" id="rb-errors" role="alert"></span>
     <button type="button" class="btn" id="rb-cancel">取消</button>
     <button type="button" class="btn primary" id="rb-save">儲存規則</button></div>
+</dialog>
+
+<dialog id="diag-dialog" class="big" aria-labelledby="diag-title">
+  <div class="dlg-head"><h2 id="diag-title">診斷</h2>
+    <button type="button" class="btn small" id="diag-close" aria-label="關閉">關閉</button></div>
+  <div class="rb-main" id="diag-body"></div>
+  <div class="dlg-foot"><span class="hint">診斷資料不含圖面、規範、規則的內容與檔名，也不會自動傳送。</span>
+    <a class="btn" id="diag-download" href="/api/diagnostics/bundle" download>下載診斷資料（ZIP）</a></div>
 </dialog>
 
 <dialog id="ask-dialog" aria-labelledby="ask-title">
