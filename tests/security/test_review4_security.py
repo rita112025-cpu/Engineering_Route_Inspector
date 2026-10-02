@@ -105,7 +105,11 @@ def test_export_location_is_relative(live, sample_dxf):
 
 def test_request_paths_cannot_forge_log_lines(live):
     live.raw.get("/api/projects/abc%0AFAKE%20ERROR%20admin%20logged%20in%0D%0A2099-01-01")
-    log = (live.config.data_dir / "logs" / "server.log").read_text(encoding="utf-8")
+    path = live.config.data_dir / "logs" / "server.log"
+    deadline = time.monotonic() + 10                                    # the access line is written after the response
+    while "FAKE ERROR" not in path.read_text(encoding="utf-8") and time.monotonic() < deadline:
+        time.sleep(0.05)
+    log = path.read_text(encoding="utf-8")
     assert "FAKE ERROR" in log                                           # it is logged, but only as escaped text
     assert not any(line.startswith("FAKE ERROR") or line.startswith("2099-01-01") for line in log.splitlines())
     assert "\\x0a" in log
