@@ -115,14 +115,21 @@ class JobManager:
         cutoff = time.time() - days * 86400
         active = {r["id"] for r in self.repo.active_runs()}
         n = 0
-        for f in self.logs_dir.glob("run_*.log"):
-            try:
-                if f.stem not in active and f.stat().st_mtime < cutoff:
-                    f.unlink()
-                    n += 1
-            except OSError:
-                pass
+        for pattern in ("run_*.log", "run_*.hb"):
+            for f in self.logs_dir.glob(pattern):
+                try:
+                    if f.stem not in active and f.stat().st_mtime < cutoff:
+                        f.unlink()
+                        n += 1
+                except OSError:
+                    pass
         return n
+
+    def _drop_heartbeat(self, run_id: str) -> None:
+        try:
+            (self.logs_dir / f"{run_id}.hb").unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def start(self) -> dict:
         self.prune_logs()
@@ -142,6 +149,7 @@ class JobManager:
                 t.kill()
                 self.repo.finish_run(t.run_id, "failed", error_code="INTERRUPTED",
                                      error_message="程式關閉時分析被中斷，請重新執行分析。")
+                self._drop_heartbeat(t.run_id)
             self.tracked.clear()
         self.conn.close()
 
@@ -185,6 +193,7 @@ class JobManager:
                                         error_message="上次執行時分析程序意外中止（程式或電腦可能曾關閉），請重新執行分析。"):
                     lost.append(run["id"])
                     self._event("recovered_failed", run["id"])
+                self._drop_heartbeat(run["id"])
         queued = [r["id"] for r in self.repo.active_runs() if r["status"] == "queued"]
         return {"marked_failed": lost, "adopted": adopted, "requeued": queued}
 
@@ -210,7 +219,7 @@ class JobManager:
             if code is None:
                 continue
             del self.tracked[rid]
-            (self.logs_dir / f"{rid}.hb").unlink(missing_ok=True)
+            self._drop_heartbeat(rid)
             run = self.repo.get_run(rid)
             if run is None or run["status"] not in ("queued", "running"):
                 self._event("exited", rid, f"code={code}")
@@ -239,14 +248,16 @@ class JobManager:
                         error_message=self._stall_message(rid),
                         error_detail=_log_tail(t.log_path))
                     self._event("stalled", rid)
+                    self._drop_heartbeat(rid)
                 elif self._no_progress(rid, t):
                     t.kill()
                     self.repo.finish_run(
                         rid, "failed", error_code="WORKER_NO_PROGRESS",
-                        error_message=f"分析超過 {self.progress_timeout:.0f} 秒沒有任何進度（程式仍在運算），已停止。"
-                                      "可能是圖面或規則過於龐大，請縮小範圍或簡化規則後重試。",
+                        error_message=f"分析在「{self._where(rid)}」超過 {self.progress_timeout:.0f} 秒沒有任何進度"
+                                      "（程式仍在運算），已停止。可能是圖面或規則過於龐大，請縮小範圍或簡化規則後重試。",
                         error_detail=_log_tail(t.log_path))
                     self._event("no_progress", rid)
+                    self._drop_heartbeat(rid)
                 elif now - t.started > self.run_timeout and t.exit_code() is None:
                     t.kill()
                     self.repo.finish_run(
@@ -255,20 +266,27 @@ class JobManager:
                                       "可能是規則或圖面過於複雜，請簡化規則後重試。",
                         error_detail=_log_tail(t.log_path))
                     self._event("timeout", rid)
+                    self._drop_heartbeat(rid)
                 continue
             if now - t.cancel_seen > CANCEL_GRACE_SECONDS and t.exit_code() is None:
                 t.kill()
                 self.repo.finish_run(rid, "cancelled", error_code="CANCELLED",
                                      error_message="使用者取消（分析程序未及時回應，已強制停止）")
                 self._event("killed", rid)
+                self._drop_heartbeat(rid)
 
-    def _stall_message(self, rid: str) -> str:
+    def _where(self, rid: str) -> str:
+        """'分析規則：CLEARANCE（第 1/3 條）' - the stage (and rule) a run was in, for messages."""
         run = self.repo.get_run(rid) or {}
         label = dict(STAGES).get(run.get("stage"), run.get("stage") or "")
         note = f"：{run['stage_note']}" if run.get("stage_note") else ""
-        hint = ("這通常是這條規則的比對規則（regex）太複雜，請簡化它。" if run.get("stage") == "rules"
+        return f"{label}{note}"
+
+    def _stall_message(self, rid: str) -> str:
+        stage = (self.repo.get_run(rid) or {}).get("stage")
+        hint = ("這通常是這條規則的比對規則（regex）太複雜，請簡化它。" if stage == "rules"
                 else "請重新執行；若持續發生，請在診斷頁面匯出診斷資料。")
-        return f"分析在「{label}{note}」超過 {self.stall_timeout:.0f} 秒沒有回應，已停止。{hint}"
+        return f"分析在「{self._where(rid)}」超過 {self.stall_timeout:.0f} 秒沒有回應，已停止。{hint}"
 
     def _no_progress(self, rid: str, t: Tracked) -> bool:
         """Alive and beating, but no progress record in the database for a long time (an endless or

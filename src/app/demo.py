@@ -6,6 +6,8 @@ and says so; it is not a real standard.
 """
 from __future__ import annotations
 
+import threading
+
 from core.evidence.chunks import find_by_quote
 from core.rules.schema import normalize_ruleset
 from . import api, templates
@@ -31,8 +33,18 @@ RULES = [
 ]
 
 
+# One loader at a time: a double click or a second tab must not build the demo twice, and nobody may be handed
+# a demo that is still being filled. (The server is one process; the data folder is not shared between servers.)
+_LOAD_LOCK = threading.Lock()
+
+
 def load_demo(st: AppState) -> dict:
     """Create the demo project if it does not exist yet. Returns {project, drawing_id, created}."""
+    with _LOAD_LOCK:
+        return _load_demo_locked(st)
+
+
+def _load_demo_locked(st: AppState) -> dict:
     repo = st.repo()
     existing = repo.demo_project()
     if existing:

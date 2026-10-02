@@ -60,14 +60,33 @@ def _unit_suffix(issue: dict) -> str:
     return f" {issue['unit']}" if issue["unit"] not in ("", "count", None) else ""
 
 
+# Zone rules measure a yes/no flag (1 = yes). The words below describe which flag value the rule accepts.
+ZONE_REQUIREMENT_WORDS = {
+    "outside_zone": {1: "必須在區域外", 0: "必須進入區域（不在區域外）"},
+    "inside_zone": {1: "必須完全在區域內", 0: "不得完全在區域內"},
+}
+_FLAG_TESTS = {">=": lambda a, b: a >= b, ">": lambda a, b: a > b, "<=": lambda a, b: a <= b,
+               "<": lambda a, b: a < b, "==": lambda a, b: a == b, "!=": lambda a, b: a != b}
+
+
+def _zone_requirement(measurement: str, op: str, value: float) -> str:
+    test = _FLAG_TESTS.get(op)
+    if test is None:
+        return f"{op} {value:g}"
+    accepted = [flag for flag in (0, 1) if test(flag, value)]
+    if len(accepted) == 2:
+        return "任何結果都符合（沒有限制）"
+    if not accepted:
+        return "沒有任何結果能符合"
+    return ZONE_REQUIREMENT_WORDS[measurement][accepted[0]]
+
+
 def required_text(issue: dict) -> str:
     if issue["required_value"] is None:
         return ""
     m = issue.get("measurement")
-    if m == "outside_zone":
-        return "必須在區域外"
-    if m == "inside_zone":
-        return "必須完全在區域內"
+    if m in ZONE_REQUIREMENT_WORDS:
+        return _zone_requirement(m, issue["required_op"], issue["required_value"])
     if m == "intersection":
         return f"交叉數 {issue['required_op']} {issue['required_value']:g}"
     return f"{issue['required_op']} {issue['required_value']:g}{_unit_suffix(issue)}"

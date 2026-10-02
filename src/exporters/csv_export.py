@@ -8,7 +8,7 @@ from .report import BASELINE_ZH, Report, confidence_zh, measurement_zh, status_z
 
 HEADERS = ["問題編號", "狀態", "規則嚴重度", "信心", "規則編號", "規則名稱", "檢查方式", "圖層", "系統",
            "Handle", "X", "Y", "實測值", "規則要求", "單位", "證據編號", "證據出處", "說明", "判定依據",
-           "建議處理", "與基準比較"]
+           "建議處理", "與基準比較", "專案"]
 _DANGEROUS = ("=", "+", "-", "@", "\t", "\r", "\n")
 
 
@@ -34,5 +34,6 @@ def render_csv(report: Report) -> bytes:
             "" if i["measured"] is None else f"{i['measured']:g}", report.required_text(i), i["unit"] or "",
             i["evidence_id"] or "", safe_cell(report.evidence_ref_text(i)), safe_cell(i["message"]),
             safe_cell(i["reason"]), safe_cell(i["fix"]), BASELINE_ZH.get(i["baseline_state"], i["baseline_state"]),
+            safe_cell(report.project["name"]),
         ])
     return ("﻿" + buf.getvalue()).encode("utf-8")
