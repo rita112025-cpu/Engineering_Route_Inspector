@@ -169,18 +169,18 @@ python scripts/package_release.py                     # 預設打包 HEAD；--re
 
 ## 驗證狀態
 
-目前測試收集共 697 項（單元 110、整合 220、回歸 236、安全 111、效能 11、瀏覽器 9）。收集數包含依平台或環境略過的測試，不代表全部通過。
+目前測試收集共 702 項（單元 110、整合 224、回歸 237、安全 111、效能 11、瀏覽器 9）。收集數包含依平台或環境略過的測試，不代表全部通過。
 
 2026-10-03 在 Windows 11（10.0.26300，Intel Core Ultra 9 275HX、31.4 GB RAM）、Python 3.12.10、pytest 9.1.1、ezdxf 1.4.4、uvicorn 0.54.0 驗證。
 
 | 項目 | 結果 |
 |---|---|
 | 本輪起點 HEAD `346383d`：`pytest -q -W error`（未安裝 Playwright） | 499 passed、12 skipped，159.15 秒，exit 0；9 項瀏覽器測試因未安裝 Playwright 略過 |
-| 本輪修改後：`pytest -q -W error`（`ERI_CHROMIUM` 指向現有 Chrome） | **650 passed、3 skipped**，195.82 秒，exit 0；無 warnings。3 項略過：Windows 不允許的 `?` 資料夾名稱與 2 項 POSIX launcher 測試 |
-| 各群組（各自執行，`-W error`） | 單元 110 passed；整合 211 passed、3 skipped；回歸 198 passed；安全 111 passed；效能 11 passed；瀏覽器 9 passed（無頭 Chrome，自動化，非人工操作） |
+| 本輪修改後：`pytest -q -W error`（`ERI_CHROMIUM` 指向現有 Chrome） | **699 passed、3 skipped**，183.13 秒，exit 0；無 warnings。3 項略過：Windows 不允許的 `?` 資料夾名稱與 2 項 POSIX launcher 測試 |
+| 各群組（各自執行，`-W error`） | 單元 110 passed；整合 221 passed、3 skipped；回歸 237 passed；安全 111 passed；效能 11 passed；瀏覽器 9 passed（無頭 Chrome，自動化，非人工操作） |
 | 本輪發現並修正的 Windows 問題 | 上傳損毀 PDF 時 PyMuPDF 仍持有檔案，刪除被拒的上傳會 `WinError 32` → 500（只在完整套件中間歇出現，與 GC 時機有關）。改為從記憶體開啟 PDF，清理失敗也不再變成 500；新測試在舊程式碼上穩定失敗 |
 | `start-ui.sh`（Linux 版啟動腳本；歷史紀錄，本輪未重驗） | 在乾淨副本實際執行：建立 `.venv`、安裝套件、啟動，首頁回 200、`/api/health` 正常、錯誤的 Host 標頭回 403 |
-| `start-ui.bat` | 上一輪在真實 Windows 執行（首頁與 `/api/health` 回 200、診斷 exit code、cp950 命令列無 traceback、Ctrl+C）；**本輪未重驗** |
+| `start-ui.bat` | 2026-10-03 在真實 Windows 實際執行：複製到**全新、路徑含空白的資料夾**，首次執行建立 `.venv`、安裝 16 個套件（`pip install`，需連網），約 45 秒後伺服器就緒；`/` 與 `/api/health` 回 200，錯誤 Host 與 Origin 回 403，只監聽 `127.0.0.1`，WebSocket 升級沒有得到 101。應用程式失敗（`--host 0.0.0.0`）：結束碼 2、自我檢查剛好 1 次；`--diagnose --json` 兩種參數順序：結束碼 0、無重複診斷；資料夾不存在：結束碼 1；參數 `--d*` 加上同名誘餌檔：新版自我檢查 1 次，舊版 0 次（舊版有漏判）。**未實測 Ctrl+C**（用 `taskkill` 結束）。這些步驟另有自動化測試（`tests/integration/test_windows_launcher.py`，真實執行複製出來的啟動器） |
 | 瀏覽器人工操作 | **BROWSER HUMAN TEST PENDING**：尚未由人在真實瀏覽器中操作驗收 |
 
 **規則引擎效能（本輪，同一台機器，修改前＝`346383d`，修改後＝本次 commit；單次執行，未取平均，數字會有幾成的波動）**
@@ -214,8 +214,11 @@ python scripts/package_release.py                     # 預設打包 HEAD；--re
 `ALL-WITHIN` 的行為由 `tests/regression/test_all_within_parity.py` 把關：與舊版 `_containment` 逐項比對、與不用索引的參考實作比對、
 與修改前程式碼產生的 golden hash 比對、並涵蓋門檻邊界、pair filter、Z 高程、WARNING 邊界、取消。
 
-**已知且未更動的行為**：目標與主體的距離落在搜尋視窗外不到 1e-6 時，該筆結果的狀態是 PASS（容差內），
-但會帶著 `violations.count = 1` 的細節。這在修改前就存在，本輪刻意不改變。
+**已修正（2026-10-03）**：以 `<=` 比較時，間距落在上限之外 1e-6 以內（容差內）的目標，原本結果是 PASS 卻帶著 `violations.count = 1`
+（搜尋視窗只到上限，視窗外一律算「遠」並計入違規，但數值判定允許 1e-6 容差）。視窗現在放寬到容差範圍，狀態與違規數不再矛盾；
+同時修正 `<` 時「間距在上限減 1e-6 到上限之間」的目標在同一主體另有遠處目標時沒被計入違規數的問題。
+多筆違規的訊息也改為「這裡列出的是超出範圍者中的第一個」（原本寫「圖面順序中的第一個」，與實際不符；實際列出的是依圖層、系統分組順序的第一個超出範圍目標）。
+50,000 個物件的完整結果與修改前的基準逐位元相同，唯一差別是這句訊息的文字。
 
 歷史效能基準（`python scripts/benchmark_geometry.py`，2026-10-02 於 Linux 容器、Python 3.11.15、ezdxf 1.4.4 執行；7 條規則，結果因機器而異；**本輪未重跑，僅供參考，不可與上面的 Windows 數字當成同一次測試**）：
 

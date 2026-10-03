@@ -467,7 +467,7 @@ class RuleEvaluator:
             handles.extend(ev[1].handle for ev in failing_found[:max(0, 20 - len(handles))])
             res.details["violations"] = {"count": total, "handles": handles[:20]}
             if total > 1:
-                res.message += f"（另有 {total - 1} 個目標同樣不符；這裡列出的是圖面順序中的第一個）"
+                res.message += f"（另有 {total - 1} 個目標同樣不符；這裡列出的是超出範圍者中的第一個）"
             return res
         evals = list(found.values())
         collapsed = self._collapse_upper_bound(s, evals)

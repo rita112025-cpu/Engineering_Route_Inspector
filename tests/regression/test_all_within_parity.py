@@ -341,9 +341,13 @@ def test_violation_count_handles_and_first_offender(ef):
 
 # -- 3. golden hashes produced by the code before the change (346383d) -------------------------------------------
 
+# Hashes of the complete result rows of the pre-change code (346383d), with exactly one difference applied by hand:
+# the sentence "...圖面順序中的第一個" of a multi-violation message now reads "...超出範圍者中的第一個" (the listed target is
+# the first one outside the window, which is what it always was). Every other character of every result - ids, statuses,
+# measured values, locations, violation counts and handles - is the pre-change value.
 GOLDEN = {
-    1000: "b6acb9aa122b091101c057e63f4a26ca4f328c9cdbe450336595a2246c903b30",
-    10000: "951e362ad64886bcbcc271b68ff7136b6de4bfae8b05d9b42514da91bf9f387f",
+    1000: "4cdde9122a4d38a1339fec6450d485c71995c53d79dc7f66f5a777f0c2eadbcb",
+    10000: "7cdf612044e95ed9efca15304b329f4ac4881a44780703381a4e29a120c59a1e",
 }
 
 
@@ -449,3 +453,17 @@ def test_status_and_violation_count_never_contradict_each_other_in_random_scenes
                 seen_pass += 1
             assert fingerprint(_run(ents, rule, index_kind="brute")) == fingerprint(out)
     assert seen_pass > 20 and seen_fail > 20          # both outcomes are really exercised
+
+
+def test_the_multi_violation_message_describes_the_listed_target_truthfully(ef):
+    """The target shown is the first one outside the window, and the count also includes targets inside the window that
+    fail on their own (just under X for a strict "< X")."""
+    s = ef.line("SCADA-A", (0, 0), (1000, 0))
+    inside_but_failing = ef.line("POWER-A", (0, 99.9999991), (1000, 99.9999991))        # < 100 needs < 100 - 1e-6
+    far1 = ef.line("POWER-A", (0, 400), (1000, 400))
+    far2 = ef.line("POWER-A", (0, -900), (1000, -900))
+    (r,) = _run([s, inside_but_failing, far1, far2], _rule(value=100, operator="<")).results
+    assert r.details["violations"]["count"] == 3 and r.target_handles == [far1.handle]
+    assert "另有 2 個目標同樣不符" in r.message and "超出範圍者中的第一個" in r.message
+    assert "圖面順序" not in r.message
+    assert r.measured > 100                                                              # what is listed really is out of range

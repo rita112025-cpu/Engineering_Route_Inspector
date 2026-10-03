@@ -106,3 +106,19 @@ def test_the_decision_has_a_single_source_in_the_script():
     assert len(comparisons) == 1, comparisons                          # one decision, in :has_diagnose
     assert not [l for l in code if l.lower().startswith("for ") and "%*" in l]
     assert [l for l in code if l.lower().startswith("call :has_diagnose")] == ["call :has_diagnose %*"]
+
+
+@pytest.mark.parametrize("args", [["", "--diagnose"], ["--json", "", "--diagnose"], ["--diagnose", ""]])
+def test_an_empty_argument_does_not_hide_diagnose(win_box, args):
+    """The scan ended at the first empty argument (the end test compared the unquoted argument with nothing), so
+    `start-ui.bat "" --diagnose` ran the self-check a second time. The app itself rejects the empty argument (exit 2)."""
+    r = run_box(win_box, *args)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "Running the self-check" not in r.stdout and "The program stopped" not in r.stdout, r.stdout
+
+
+def test_comments_in_the_launcher_contain_no_percent_signs():
+    """cmd expands percent signs in rem lines too, so a comment mentioning an argument variable would expand the
+    user's arguments."""
+    lines = (ROOT / "start-ui.bat").read_bytes().decode("ascii").splitlines()
+    assert [l for l in lines if l.lower().startswith("rem") and "%" in l] == []

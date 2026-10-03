@@ -102,4 +102,5 @@ def test_confirmed_reason_does_not_overclaim(ef):
 def test_all_within_message_says_which_target_is_listed(ef):
     ents = [ef.line("SCADA", (0, 0), (1000, 0))] + [ef.line("POWER", (0, y), (1000, y)) for y in (400, 700)]
     (r,) = _run(ents, _rule()).results
-    assert "圖面順序" in r.message and "另有 1 個" in r.message
+    # the listed target is the first one outside the window (not necessarily the first in drawing order)
+    assert "超出範圍者中的第一個" in r.message and "圖面順序" not in r.message and "另有 1 個" in r.message

@@ -83,11 +83,14 @@ exit /b %RC%
 exit /b 0
 
 rem Sets IS_DIAGNOSE when --diagnose is among the arguments (any position). This is the only place that decides
-rem it. The arguments are walked with shift, not "for %%A in (%*)": that form turns * and ? into file names.
+rem it. The arguments are walked with shift; a for loop over all arguments would turn * and ? into file names.
+rem (No percent sign in these comments: cmd expands percent signs even in rem lines, i.e. it would expand the user's arguments.)
 :has_diagnose
 set "IS_DIAGNOSE="
 :has_diagnose_next
-if "%~1"=="" exit /b 0
+rem The test below uses square brackets around the raw argument, so an empty argument is still an argument
+rem and only the end of the list is empty.
+if [%1]==[] exit /b 0
 if /i "%~1"=="--diagnose" set "IS_DIAGNOSE=1"
 shift
 goto has_diagnose_next
