@@ -18,6 +18,8 @@
 
 關閉啟動視窗即結束程式。啟動時可加參數，例如 `start-ui.bat --port 9000 --no-browser`。
 
+桌面捷徑：對 `start-ui.bat` 按右鍵建立捷徑，圖示可選 `assets\eri.ico`（內含 16～256 px，由 `scripts/make_icon.py` 以純 Python 畫出；`python scripts/make_icon.py --check` 可確認檔案與腳本一致）。
+
 > 第一次試用：按畫面上方的「**載入示範專案**」，再按「**開始分析**」，不需要準備任何檔案。
 
 ## 使用流程
@@ -169,15 +171,15 @@ python scripts/package_release.py                     # 預設打包 HEAD；--re
 
 ## 驗證狀態
 
-目前測試收集共 702 項（單元 110、整合 224、回歸 237、安全 111、效能 11、瀏覽器 9）。收集數包含依平台或環境略過的測試，不代表全部通過。
+目前測試收集共 705 項（單元 113、整合 224、回歸 237、安全 111、效能 11、瀏覽器 9）。收集數包含依平台或環境略過的測試，不代表全部通過。
 
 2026-10-03 在 Windows 11（10.0.26300，Intel Core Ultra 9 275HX、31.4 GB RAM）、Python 3.12.10、pytest 9.1.1、ezdxf 1.4.4、uvicorn 0.54.0 驗證。
 
 | 項目 | 結果 |
 |---|---|
 | 本輪起點 HEAD `346383d`：`pytest -q -W error`（未安裝 Playwright） | 499 passed、12 skipped，159.15 秒，exit 0；9 項瀏覽器測試因未安裝 Playwright 略過 |
-| 本輪修改後：`pytest -q -W error`（`ERI_CHROMIUM` 指向現有 Chrome） | **699 passed、3 skipped**，183.13 秒，exit 0；無 warnings。3 項略過：Windows 不允許的 `?` 資料夾名稱與 2 項 POSIX launcher 測試 |
-| 各群組（各自執行，`-W error`） | 單元 110 passed；整合 221 passed、3 skipped；回歸 237 passed；安全 111 passed；效能 11 passed；瀏覽器 9 passed（無頭 Chrome，自動化，非人工操作） |
+| 本輪修改後：`pytest -q -W error`（`ERI_CHROMIUM` 指向現有 Chrome） | **702 passed、3 skipped**，188.67 秒，exit 0；無 warnings。3 項略過：Windows 不允許的 `?` 資料夾名稱與 2 項 POSIX launcher 測試 |
+| 各群組（`-W error`） | 單元 113、整合 221（另 3 略過）、回歸 237、安全 111、效能 11、瀏覽器 9（無頭 Chrome，自動化，非人工操作），合計 702 |
 | 本輪發現並修正的 Windows 問題 | 上傳損毀 PDF 時 PyMuPDF 仍持有檔案，刪除被拒的上傳會 `WinError 32` → 500（只在完整套件中間歇出現，與 GC 時機有關）。改為從記憶體開啟 PDF，清理失敗也不再變成 500；新測試在舊程式碼上穩定失敗 |
 | `start-ui.sh`（Linux 版啟動腳本；歷史紀錄，本輪未重驗） | 在乾淨副本實際執行：建立 `.venv`、安裝套件、啟動，首頁回 200、`/api/health` 正常、錯誤的 Host 標頭回 403 |
 | `start-ui.bat` | 2026-10-03 在真實 Windows 實際執行：複製到**全新、路徑含空白的資料夾**，首次執行建立 `.venv`、安裝 16 個套件（`pip install`，需連網），約 45 秒後伺服器就緒；`/` 與 `/api/health` 回 200，錯誤 Host 與 Origin 回 403，只監聽 `127.0.0.1`，WebSocket 升級沒有得到 101。應用程式失敗（`--host 0.0.0.0`）：結束碼 2、自我檢查剛好 1 次；`--diagnose --json` 兩種參數順序：結束碼 0、無重複診斷；資料夾不存在：結束碼 1；參數 `--d*` 加上同名誘餌檔：新版自我檢查 1 次，舊版 0 次（舊版有漏判）。**未實測 Ctrl+C**（用 `taskkill` 結束）。這些步驟另有自動化測試（`tests/integration/test_windows_launcher.py`，真實執行複製出來的啟動器） |
