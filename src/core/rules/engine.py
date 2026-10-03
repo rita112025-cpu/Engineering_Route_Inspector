@@ -426,7 +426,10 @@ class RuleEvaluator:
             cached = self._eligible[key] = (eligible, {i for idxs in eligible for i in idxs})
         eligible, eligible_set = cached
         others = len(eligible_set) - (1 if sid in eligible_set else 0)
-        reach = max(self.to_drawing_units(self.value), EPS)
+        # The window is X plus the tolerance compare() allows: a target up to EPS beyond X still satisfies
+        # "<= X", so it has to be evaluated like any other target in the window. If it were left outside it would
+        # be counted as "far" (a violation) while its own value classifies as PASS: a PASS with violations.count 1.
+        reach = max(self.to_drawing_units(self.value), EPS) + self.to_drawing_units(EPS)
         found: dict[int, tuple] = {}
         skipped: set[int] = set()                          # inside the window but not comparable (other level)
         for idx in ctx.index.query(expand_bbox(s.bbox, reach)):
@@ -457,9 +460,14 @@ class RuleEvaluator:
             dr = entity_distance(s, t)
             v = self.to_rule_units(dr.distance)
             res = self._pair_result(self.classify_value(v), s, t, v, dr, "2D 平面最短距離")
-            res.details["violations"] = {"count": far, "handles": handles[:20]}
-            if far > 1:
-                res.message += f"（另有 {far - 1} 個目標同樣不符；這裡列出的是圖面順序中的第一個）"
+            # targets inside the window whose own value fails the rule (e.g. just under X for a strict "< X") are
+            # violations too: the count is the number of targets that fail, not only the ones beyond the window
+            failing_found = [ev for ev in found.values() if ev[2] is not None and not compare(ev[2], self.op, self.value)]
+            total = far + len(failing_found)
+            handles.extend(ev[1].handle for ev in failing_found[:max(0, 20 - len(handles))])
+            res.details["violations"] = {"count": total, "handles": handles[:20]}
+            if total > 1:
+                res.message += f"（另有 {total - 1} 個目標同樣不符；這裡列出的是圖面順序中的第一個）"
             return res
         evals = list(found.values())
         collapsed = self._collapse_upper_bound(s, evals)

@@ -42,8 +42,8 @@ set "PYTHONPATH=%~dp0src"
 "%VPY%" -m app %*
 set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" goto done
-if /i "%~1"=="--diagnose" goto done_rc
-for %%A in (%*) do if /i "%%~A"=="--diagnose" goto done_rc
+call :has_diagnose %*
+if defined IS_DIAGNOSE goto done_rc
 echo.
 echo The program stopped with error code %RC%. Running the self-check:
 echo.
@@ -81,3 +81,13 @@ exit /b %RC%
 
 :done
 exit /b 0
+
+rem Sets IS_DIAGNOSE when --diagnose is among the arguments (any position). This is the only place that decides
+rem it. The arguments are walked with shift, not "for %%A in (%*)": that form turns * and ? into file names.
+:has_diagnose
+set "IS_DIAGNOSE="
+:has_diagnose_next
+if "%~1"=="" exit /b 0
+if /i "%~1"=="--diagnose" set "IS_DIAGNOSE=1"
+shift
+goto has_diagnose_next

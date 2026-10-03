@@ -384,3 +384,68 @@ def test_all_within_still_checks_for_cancellation_between_subjects(ef):
     with pytest.raises(Cancelled):
         evaluate_rule(rs["rules"][0], ctx)
     assert calls["n"] <= 7                       # stops within a couple of subjects, not after the whole rule
+
+
+# -- a PASS must never carry a violation count (found by the review of 7236ff8) ------------------------------------
+
+BAND_GAPS = [99.9999995, 100, 100.0000005, 100.0000009, 100.0000011, 100.000002, 100.001, 250]
+
+
+def _violators(entities_gap_pairs, op):
+    """Independent count: targets whose own distance fails the rule (<= 100 mm or < 100 mm, tolerance 1e-6)."""
+    from core.rules.engine import compare
+    return [g for g in entities_gap_pairs if not compare(g, op, 100)]
+
+
+@pytest.mark.parametrize("op", ["<=", "<"])
+@pytest.mark.parametrize("gap", BAND_GAPS)
+def test_a_target_within_the_tolerance_is_a_clean_pass_not_a_pass_with_a_violation(ef, gap, op):
+    from core.rules.engine import compare
+    (r,) = _run(_pair_scene(gap)(ef), _rule(value=100, operator=op)).results
+    expected = "PASS" if compare(gap, op, 100) else "FAIL"
+    assert r.status == expected, (gap, op, r.status)
+    if r.status == "PASS":
+        assert "violations" not in r.details, (gap, op, r.details.get("violations"))
+    else:
+        assert r.details["violations"]["count"] == 1 and r.details["violations"]["handles"] == r.target_handles
+
+
+@pytest.mark.parametrize("unit,value,scale", [("mm", 100.0, 1.0), ("cm", 10.0, 1.0), ("m", 0.1, 1.0)])
+@pytest.mark.parametrize("extra", [-2e-6, -5e-7, 0.0, 5e-7, 9e-7, 1.5e-6, 1e-3])
+def test_the_tolerance_band_is_consistent_in_every_rule_unit(ef, unit, value, scale, extra):
+    from core.rules.engine import compare
+    unit_mm = {"mm": 1.0, "cm": 10.0, "m": 1000.0}[unit]
+    gap_mm = value * unit_mm + extra * unit_mm                         # the same relative offset in each unit
+    (r,) = _run(_pair_scene(gap_mm)(ef), _rule(value=value, unit=unit)).results
+    assert (r.status == "PASS") == compare(gap_mm / unit_mm, "<=", value)
+    assert (r.status == "PASS") == ("violations" not in r.details)
+
+
+def test_status_and_violation_count_never_contradict_each_other_in_random_scenes(ef):
+    """Random subjects with several targets at distances scattered around the limit (inside, on the tolerance edge,
+    just outside, far): PASS <=> no violations; the count is the number of targets that fail on their own."""
+    from core.rules.engine import compare
+    rng = random.Random(77)
+    offsets = [-1e-3, -2e-6, -9e-7, 0.0, 5e-7, 9e-7, 1.1e-6, 2e-6, 1e-3, 50.0, 400.0]
+    seen_pass = seen_fail = 0
+    for op in ("<=", "<"):
+        for trial in range(60):
+            from tests.conftest import EntityFactory
+            f = EntityFactory()
+            ents = [f.line("SCADA-A", (0, 0), (1000, 0))]
+            gaps = [100 + rng.choice(offsets) for _ in range(rng.randint(1, 4))]
+            for k, g in enumerate(gaps):                              # targets above and below, all parallel to the subject
+                ents.append(f.line("POWER-A", (0, g if k % 2 == 0 else -g), (1000, g if k % 2 == 0 else -g)))
+            rule = _rule(value=100, operator=op)
+            out = _run(ents, rule)
+            (r,) = out.results
+            failing = _violators(gaps, op)
+            assert (r.status == "PASS") == (not failing), (op, gaps, r.status)
+            if failing:
+                assert r.details["violations"]["count"] == len(failing), (op, gaps, r.details["violations"])
+                seen_fail += 1
+            else:
+                assert "violations" not in r.details, (op, gaps, r.details.get("violations"))
+                seen_pass += 1
+            assert fingerprint(_run(ents, rule, index_kind="brute")) == fingerprint(out)
+    assert seen_pass > 20 and seen_fail > 20          # both outcomes are really exercised

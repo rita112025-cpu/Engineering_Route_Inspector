@@ -101,7 +101,10 @@ def test_r114_launchers_do_not_repeat_the_diagnosis_for_a_diagnose_run():
     sh = (ROOT / "start-ui.sh").read_text(encoding="ascii")
     bat = (ROOT / "start-ui.bat").read_bytes().decode("ascii")
     assert '[ "$a" = "--diagnose" ] && diagnosing=1' in sh and sh.rstrip().endswith('exit "$rc"')
-    assert 'if /i "%~1"=="--diagnose" goto done_rc' in bat
+    assert 'call :has_diagnose %*' in bat
+    assert 'if defined IS_DIAGNOSE goto done_rc' in bat
+    assert bat.lower().count('if /i "%~1"=="--diagnose"') == 1
+    assert not re.search(r"^for %%A in \(%\*\)", bat, re.M)
     assert re.search(r"^:done_rc\r?$", bat, re.M)     # (the shell script's exit codes are run for real in test_review12_fixes)
 
 
