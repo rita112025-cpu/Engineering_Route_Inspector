@@ -147,17 +147,20 @@ python scripts/benchmark_geometry.py                  # 效能基準
 
 ## 驗證狀態
 
-以下是在 Linux 容器（Python 3.11.15、ezdxf 1.4.4）實際執行的結果；Windows 與人工操作的部分另列。
+目前測試收集共 511 項（單元 108、整合 169、回歸 115、安全 102、效能 8、瀏覽器 9）。收集數包含依平台或環境略過的測試，不代表全部通過。
+
+2026-10-03 在 Windows（Python 3.12.10、pytest 9.1.1、ezdxf 1.4.4）驗證；下方效能數字仍是原先 Linux 容器的歷史結果。
 
 | 項目 | 結果 |
 |---|---|
-| `pytest -W error` | 507 passed（單元 108、整合 165、回歸 115、安全 102、效能 8、瀏覽器 9） |
+| 原始 HEAD `56126de`：`pytest -q -W error` | 495 passed、12 skipped，160.83 秒，exit 0；其中 9 項因當時未安裝 Playwright 略過 |
+| 本輪修正後：`pytest -q -W error`（`ERI_CHROMIUM` 指向現有 Chrome） | 508 passed、3 skipped，182.88 秒，exit 0；無 warnings。略過 Windows 不允許的 `?` 資料夾名稱與 2 項 POSIX launcher 測試 |
 | 瀏覽器測試 | 以 Playwright 操作無頭 Chromium 的自動化測試通過（載入示範專案、分析、點紅色問題、匯出、診斷視窗等） |
-| `start-ui.sh`（Linux 版啟動腳本） | 在乾淨副本實際執行：建立 `.venv`、安裝套件、啟動，首頁回 200、`/api/health` 正常、錯誤的 Host 標頭回 403 |
-| `start-ui.bat` | **尚未在 Windows 實際執行**（測試環境沒有 Windows）；只做了靜態檢查（CRLF、僅 ASCII、`goto` 標籤齊全、無網路／刪除指令、不覆寫主機位址） |
+| `start-ui.sh`（Linux 版啟動腳本；歷史紀錄，本輪未重驗） | 在乾淨副本實際執行：建立 `.venv`、安裝套件、啟動，首頁回 200、`/api/health` 正常、錯誤的 Host 標頭回 403 |
+| `start-ui.bat` | 真實 Windows 執行：首頁與 `/api/health` 回 200；正常診斷 exit 0、損壞資料庫 exit 1；兩種參數順序均只診斷一次；從 cp950 命令列執行無 traceback。送出真實 Ctrl+C 後伺服器記錄 `stopped`，確認終止 batch 後 exit 255，無重複診斷。使用現有 `.venv`；未重驗首次建立環境與下載依賴 |
 | 瀏覽器人工操作 | **BROWSER HUMAN TEST PENDING**：尚未由人在真實瀏覽器中操作驗收 |
 
-效能基準（`python scripts/benchmark_geometry.py`，2026-10-02 於上述環境執行；7 條規則，結果因機器而異）：
+效能基準（`python scripts/benchmark_geometry.py`，2026-10-02 於 Linux 容器、Python 3.11.15、ezdxf 1.4.4 執行；7 條規則，結果因機器而異；本輪未重跑）：
 
 | 物件數 | 分析時間 | 問題筆數 | 空間索引與暴力比對 |
 |---|---|---|---|

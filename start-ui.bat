@@ -43,6 +43,7 @@ set "PYTHONPATH=%~dp0src"
 set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" goto done
 if /i "%~1"=="--diagnose" goto done_rc
+for %%A in (%*) do if /i "%%~A"=="--diagnose" goto done_rc
 echo.
 echo The program stopped with error code %RC%. Running the self-check:
 echo.

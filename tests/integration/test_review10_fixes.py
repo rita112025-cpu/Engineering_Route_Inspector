@@ -154,7 +154,7 @@ def test_u82_readme_commands_can_be_run_as_written():
 
 def test_s1_readme_test_counts_match_the_suite():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    m = re.search(r"(\d+) passed（單元 (\d+)、整合 (\d+)、回歸 (\d+)、安全 (\d+)、效能 (\d+)、瀏覽器 (\d+)）", text)
+    m = re.search(r"共 (\d+) 項（單元 (\d+)、整合 (\d+)、回歸 (\d+)、安全 (\d+)、效能 (\d+)、瀏覽器 (\d+)）", text)
     assert m, "README must state the counts in this exact shape"
     stated = list(map(int, m.groups()))
     import subprocess, sys
