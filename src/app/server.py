@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         info = diagnostics.collect(Path(args.data_dir) if args.data_dir else default_data_dir(), deep=True)
         info.pop("log_tail", None)
         if args.json:
-            print(json.dumps(info, ensure_ascii=False, indent=2))
+            print(json.dumps(info, ensure_ascii=True, indent=2))    # pure ASCII: nothing lost on a legacy code page
         else:
             print(f"程式版本 {info['software_version']}　Python {info['python']}")
             for c in info["checks"]:

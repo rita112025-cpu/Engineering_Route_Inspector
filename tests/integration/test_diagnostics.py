@@ -106,3 +106,27 @@ def test_cli_diagnose_exit_codes(tmp_path, live):
     text = subprocess.run([sys.executable, "-m", "app", "--diagnose", "--data-dir", str(live.config.data_dir)],
                           capture_output=True, text=True, env=_clean_env(src), timeout=60)
     assert text.returncode == 0 and "結果：一切正常" in text.stdout and "[正常] 資料庫完整性" in text.stdout
+
+
+def test_scrubber_survives_missing_or_degenerate_home(tmp_path, monkeypatch):
+    def boom():
+        raise RuntimeError("Could not determine home directory.")
+    monkeypatch.setattr(Path, "home", staticmethod(boom))
+    assert diagnostics.scrubber(tmp_path)("a.b/c") == "a.b/c"
+    for degenerate in (Path("."), Path("/")):      # USERPROFILE='' / HOME='' / HOME=/
+        monkeypatch.setattr(Path, "home", staticmethod(lambda d=degenerate: d))
+        assert diagnostics.scrubber(tmp_path)("a.b/c.d") == "a.b/c.d"
+    real_home = tmp_path / "users" / "me"
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: real_home))
+    assert diagnostics.scrubber(tmp_path)(f"x {real_home} y") == "x <home> y"
+
+
+def test_cli_diagnose_never_crashes_on_a_legacy_code_page(live):
+    src = str(Path(__file__).resolve().parents[2] / "src")
+    env = {**_clean_env(src), "PYTHONIOENCODING": "cp950"}
+    base = [sys.executable, "-m", "app", "--diagnose", "--data-dir", str(live.config.data_dir)]
+    text = subprocess.run(base, capture_output=True, env=env, timeout=60)
+    assert text.returncode == 0 and b"Traceback" not in text.stderr, text.stderr
+    js = subprocess.run(base + ["--json"], capture_output=True, env=env, timeout=60)
+    assert js.returncode == 0 and b"Traceback" not in js.stderr
+    assert js.stdout.isascii() and json.loads(js.stdout)["healthy"] is True      # JSON stays lossless

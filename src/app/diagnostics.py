@@ -114,9 +114,12 @@ def scrubber(data_dir: Path, names=()):
     """A function that hides absolute paths, known file names and stored file names in text."""
     roots = {str(data_dir.resolve()): "<data>", str(REPO_ROOT): "<app>"}
     try:
-        roots[str(Path.home())] = "<home>"
+        home = Path.home()
     except RuntimeError:      # no home directory in a stripped-down environment: nothing to hide
-        pass
+        home = None
+    # an empty USERPROFILE/HOME gives Path(".") and HOME=/ gives "/": scrubbing those would mangle every line
+    if home is not None and home.is_absolute() and len(home.parts) > 1:
+        roots[str(home)] = "<home>"
     variants = {}
     for k, v in roots.items():
         variants[k] = v
