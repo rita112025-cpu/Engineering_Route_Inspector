@@ -33,8 +33,14 @@ def _containment(a: GeometryEntity, b: GeometryEntity) -> Point | None:
     for outer, inner in ((a, b), (b, a)):
         if not outer.closed:
             continue
-        poly = outer.vertices()
         ob = outer.bbox
+        ib = inner.bbox
+        # Only vertices inside outer's bbox are ever tested below, and every vertex of `inner` lies inside
+        # inner's bbox, so disjoint bboxes cannot contain anything: skip without building the vertex lists
+        # (a circle's vertices cost 180 sin/cos pairs each time).
+        if ib[0] > ob[2] or ob[0] > ib[2] or ib[1] > ob[3] or ob[1] > ib[3]:
+            continue
+        poly = outer.vertices()
         for v in inner.vertices():
             if ob[0] <= v[0] <= ob[2] and ob[1] <= v[1] <= ob[3] and point_in_polygon(v, poly):
                 return v

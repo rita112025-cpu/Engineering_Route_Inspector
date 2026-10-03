@@ -16,7 +16,10 @@ def load_pdf(path: str | Path, document_id: str, doc_hash: str, filename: str | 
     path = Path(path)
     warnings: list[str] = []
     try:
-        doc = fitz.open(str(path))
+        # Open from memory, not from the path: when fitz.open() fails, PyMuPDF's half-built Document (kept alive by the
+        # exception's traceback) holds the file open, and on Windows the caller could then not delete the rejected
+        # upload (WinError 32). Uploads are limited to max_document_mb, so reading the bytes is cheap.
+        doc = fitz.open(stream=path.read_bytes(), filetype="pdf")
     except Exception as exc:  # noqa: BLE001
         raise DocumentImportError("無法讀取 PDF", "檔案損毀或不是 PDF。", repr(exc))
     if doc.needs_pass:

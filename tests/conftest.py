@@ -97,8 +97,9 @@ class LiveServer:
             config_overrides["static_dir"] = static
         self.config = AppConfig(data_dir=tmp_path / "data", port=self.port, **config_overrides)
         self.app = create_app(self.config)
+        # ws="none" like the production server (app.server.main): no websocket library is loaded
         self.server = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1", port=self.port, log_level="error",
-                                                    lifespan="on"))
+                                                    lifespan="on", ws="none"))
         self.thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
         deadline = time.monotonic() + 20

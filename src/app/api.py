@@ -6,6 +6,7 @@ generated IDs and resolved through ``Storage``.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections import Counter
@@ -198,6 +199,15 @@ def _drawing_of(request: Request) -> dict:
     return d
 
 
+def _discard_file(path) -> None:
+    """Remove a rejected upload. Failing to do so (e.g. a file another program still holds open on Windows) must not
+    turn the clear 4xx answer about the bad file into a 500: the leftover is only an unreferenced file."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logging.getLogger("eri").warning("could not remove a rejected upload (%s)", path.name)
+
+
 def _import_drawing(st: AppState, pid: str, filename: str, fileobj) -> dict:
     name = safe_filename(filename or "", "drawing.dxf")
     lower = name.lower()
@@ -215,7 +225,7 @@ def _import_drawing(st: AppState, pid: str, filename: str, fileobj) -> dict:
     with open(stored.path, "rb") as f:
         header = f.read(4)
     if header == b"AC10":  # unlink only after the handle is closed (Windows refuses otherwise)
-        stored.path.unlink(missing_ok=True)
+        _discard_file(stored.path)
         raise bad_request("這是 DWG 檔（副檔名被改成 .dxf）。請在 CAD 軟體中另存為 DXF。", "DWG_UNSUPPORTED")
     try:
         imp = load_dxf(stored.path, name)
@@ -229,7 +239,7 @@ def _import_drawing(st: AppState, pid: str, filename: str, fileobj) -> dict:
         # whatever went wrong, do not leave a file nobody refers to (but never one a stored drawing refers to:
         # an identical upload may have committed its row while this one failed)
         if repo.drawing_by_stored_name(pid, stored.stored_name) is None:
-            stored.path.unlink(missing_ok=True)
+            _discard_file(stored.path)
         raise
 
 
@@ -299,7 +309,7 @@ def _import_document(st: AppState, pid: str, filename: str, fileobj) -> dict:
         else:
             chunks = text_importer.load_text(stored.path, doc_id, stored.sha256, name)
     except text_importer.DocumentImportError:
-        stored.path.unlink(missing_ok=True)
+        _discard_file(stored.path)
         raise
     if not chunks:
         warnings.append("這份文件沒有讀到任何文字，無法作為規範證據。")

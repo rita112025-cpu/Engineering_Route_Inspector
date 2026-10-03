@@ -169,7 +169,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_browser:
         import threading
         threading.Timer(1.2, lambda: webbrowser.open(config.url)).start()
-    uvicorn.run(app, host=config.host, port=config.port, log_level="warning", access_log=False)
+    # ws="none": no websocket implementation is imported or served (SecurityMiddleware refuses them anyway).
+    # With "auto" uvicorn imports whichever of `websockets`/`wsproto` happens to be installed, which can raise
+    # DeprecationWarnings (websockets.legacy) under `-W error` for a feature this application never uses.
+    uvicorn.run(app, host=config.host, port=config.port, log_level="warning", access_log=False, ws="none")
     return 0
 
 
