@@ -45,8 +45,10 @@ def test_cli_process_listens_only_on_loopback(tmp_path):
         deadline = time.monotonic() + 30
         listening = []
         while time.monotonic() < deadline and not listening:
-            listening = [c for c in psutil.Process(proc.pid).net_connections(kind="inet")
-                         if c.status == psutil.CONN_LISTEN]
+            # a venv python.exe on Windows is a launcher whose child is the real interpreter: look at the tree
+            root = psutil.Process(proc.pid)
+            listening = [c for p in [root, *root.children(recursive=True)]
+                         for c in p.net_connections(kind="inet") if c.status == psutil.CONN_LISTEN]
             time.sleep(0.1)
         assert listening, "server did not start"
         assert {c.laddr.ip for c in listening} == {"127.0.0.1"}

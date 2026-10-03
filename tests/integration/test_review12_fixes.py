@@ -24,6 +24,8 @@ def launcher_box(tmp_path):
     """A copy of start-ui.sh with a private 'venv' that already has the packages (no network, no pip)."""
     if sys.prefix == sys.base_prefix:
         pytest.skip("the tests are not running inside a virtual environment")
+    if sys.platform == "win32":
+        pytest.skip("start-ui.sh is the POSIX launcher; it needs symlinks and bash (start-ui.bat is covered statically)")
     box = tmp_path / "box"
     box.mkdir()
     shutil.copy(ROOT / "start-ui.sh", box / "start-ui.sh")
@@ -100,7 +102,7 @@ def test_n122_storage_paths_are_still_hidden_to_the_end_of_the_line(tmp_path, se
 
 # -- N12-3 -------------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("payload", ["a." * 32000, "aError(" * 32000, "aError:" * 20000, "File " * 30000])
+@pytest.mark.parametrize("payload", ["a." * 32000, "aError(" * 32000, "aError:" * 20000, "File " * 30000], ids=["dots", "paren", "colon", "file"])
 def test_n123_redaction_time_is_bounded_for_one_huge_line(payload):
     t = time.perf_counter()
     out = diagnostics.redact_exceptions("GET /" + payload + " -> 404 1 ms\n")

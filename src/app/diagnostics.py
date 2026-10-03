@@ -112,7 +112,11 @@ def known_names(conn: sqlite3.Connection | None) -> set[str]:
 
 def scrubber(data_dir: Path, names=()):
     """A function that hides absolute paths, known file names and stored file names in text."""
-    roots = {str(data_dir.resolve()): "<data>", str(REPO_ROOT): "<app>", str(Path.home()): "<home>"}
+    roots = {str(data_dir.resolve()): "<data>", str(REPO_ROOT): "<app>"}
+    try:
+        roots[str(Path.home())] = "<home>"
+    except RuntimeError:      # no home directory in a stripped-down environment: nothing to hide
+        pass
     variants = {}
     for k, v in roots.items():
         variants[k] = v

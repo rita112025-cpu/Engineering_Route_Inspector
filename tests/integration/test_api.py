@@ -275,7 +275,7 @@ def test_exports_over_http(live, project):
     assert len(rows) == 5 and "Handle" in rows[0]
     assert "# 工程管線檢查報告：plan.dxf" in saved["markdown"].decode()
     assert b"default-src 'none'" in saved["html"]
-    out = io.StringIO(saved["dxf"].decode("utf-8", errors="replace"))
+    out = io.StringIO(saved["dxf"].decode("utf-8", errors="replace").replace("\r\n", "\n"))
     assert ezdxf.read(out).modelspace().query('CIRCLE[layer=="ERI_FAIL"]')
     listed = live.http.get(f"/api/runs/{run['id']}/exports").json()["exports"]
     assert sorted(e["format"] for e in listed) == ["csv", "dxf", "html", "markdown"]

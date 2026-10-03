@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -84,15 +85,24 @@ def test_offline_diagnose_on_missing_folder_reports_problem(tmp_path):
     assert any(c["name"] == "資料資料夾存在" and not c["ok"] for c in info["checks"])
 
 
+def _clean_env(src: str) -> dict:
+    """Minimal environment (no PATH). Windows needs SYSTEMROOT or Winsock/asyncio cannot load."""
+    env = {"PYTHONPATH": src, "PATH": ""}
+    for k in ("SYSTEMROOT", "SystemRoot", "WINDIR"):
+        if k in os.environ:
+            env[k] = os.environ[k]
+    return env
+
+
 def test_cli_diagnose_exit_codes(tmp_path, live):
     src = str(Path(__file__).resolve().parents[2] / "src")
     ok = subprocess.run([sys.executable, "-m", "app", "--diagnose", "--json", "--data-dir", str(live.config.data_dir)],
-                        capture_output=True, text=True, env={"PYTHONPATH": src, "PATH": ""}, timeout=60)
+                        capture_output=True, text=True, env=_clean_env(src), timeout=60)
     assert ok.returncode == 0, ok.stderr
     assert json.loads(ok.stdout)["healthy"] is True
     bad = subprocess.run([sys.executable, "-m", "app", "--diagnose", "--data-dir", str(tmp_path / "missing")],
-                         capture_output=True, text=True, env={"PYTHONPATH": src, "PATH": ""}, timeout=60)
+                         capture_output=True, text=True, env=_clean_env(src), timeout=60)
     assert bad.returncode == 1 and "[問題] 資料資料夾存在" in bad.stdout and "有項目需要注意" in bad.stdout
     text = subprocess.run([sys.executable, "-m", "app", "--diagnose", "--data-dir", str(live.config.data_dir)],
-                          capture_output=True, text=True, env={"PYTHONPATH": src, "PATH": ""}, timeout=60)
+                          capture_output=True, text=True, env=_clean_env(src), timeout=60)
     assert text.returncode == 0 and "結果：一切正常" in text.stdout and "[正常] 資料庫完整性" in text.stdout

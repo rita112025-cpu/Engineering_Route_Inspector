@@ -136,6 +136,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--diagnose", action="store_true", help="只做健康檢查並印出結果，不啟動服務")
     ap.add_argument("--json", action="store_true", help="搭配 --diagnose：以 JSON 輸出")
     args = ap.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):      # a legacy console code page (cp950...) must never crash printing
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     if args.diagnose:
         from . import diagnostics
         info = diagnostics.collect(Path(args.data_dir) if args.data_dir else default_data_dir(), deep=True)

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 BAT = ROOT / "start-ui.bat"
@@ -47,7 +50,15 @@ def test_launchers_have_no_network_or_destructive_commands():
 
 
 def test_sh_is_executable_and_lf():
-    assert SH.stat().st_mode & 0o111
+    if sys.platform == "win32":
+        # NTFS has no exec bit: check the mode recorded in the git index instead
+        import subprocess
+        out = subprocess.run(["git", "ls-files", "-s", "start-ui.sh"], cwd=ROOT, capture_output=True, text=True)
+        if out.returncode != 0 or not out.stdout.strip():
+            pytest.skip("git index not available")
+        assert out.stdout.split()[0] == "100755", out.stdout
+    else:
+        assert SH.stat().st_mode & 0o111
     assert b"\r" not in SH.read_bytes()
 
 

@@ -213,9 +213,10 @@ def _import_drawing(st: AppState, pid: str, filename: str, fileobj) -> dict:
         existing["already_imported"] = True
         return existing
     with open(stored.path, "rb") as f:
-        if f.read(4) == b"AC10":
-            stored.path.unlink(missing_ok=True)
-            raise bad_request("這是 DWG 檔（副檔名被改成 .dxf）。請在 CAD 軟體中另存為 DXF。", "DWG_UNSUPPORTED")
+        header = f.read(4)
+    if header == b"AC10":  # unlink only after the handle is closed (Windows refuses otherwise)
+        stored.path.unlink(missing_ok=True)
+        raise bad_request("這是 DWG 檔（副檔名被改成 .dxf）。請在 CAD 軟體中另存為 DXF。", "DWG_UNSUPPORTED")
     try:
         imp = load_dxf(stored.path, name)
         counts = Counter(e.layer for e in imp.entities)

@@ -76,6 +76,9 @@ def test_r112_dev_requirements_have_the_test_tools():
 
 @pytest.mark.parametrize("folder", ["has#hash", "has?question", "has%percent", "空白 and 中文"])
 def test_r113_offline_diagnose_works_in_any_folder_name(tmp_path, folder):
+    import sys
+    if sys.platform == "win32" and any(c in folder for c in '?*<>|":'):
+        pytest.skip("Windows cannot create a folder with this character")
     data = tmp_path / folder
     conn = open_database(data / "eri.sqlite3")
     conn.execute("INSERT INTO projects(id, name, root_path, export_dir, is_demo, created_at, updated_at) "
