@@ -6,3 +6,4 @@ data/
 benchmark_out/
 *.egg-info/
 dist/
+.tmp-codex-*/
