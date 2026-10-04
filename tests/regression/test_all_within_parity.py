@@ -159,6 +159,7 @@ def assert_matches_reference(entities, rule):
     by_subject = {r.subject_handles[0]: r for r in out.results}
     assert set(by_subject) == set(expected)
     rank = {"FAIL": 0, "WARNING": 1, "UNKNOWN": 2}
+    any_target = any(e.is_geometric and P.match_entity(ev.rule["target"], e) for e in ev.ctx.entities)
     for handle, (far, found) in expected.items():
         r = by_subject[handle]
         if far:
@@ -174,6 +175,10 @@ def assert_matches_reference(entities, rule):
             assert r.status == group[0][0]
             assert r.details["violations"]["count"] == len(group)
         else:
+            if not any_target:
+                assert r.status == "UNKNOWN" and "violations" not in r.details
+                assert r.measured is None and r.target_handles == []
+                continue
             assert r.status == "PASS" and "violations" not in r.details
             if found:
                 assert r.measured == pytest.approx(max(f[2] for f in found), abs=1e-3)

@@ -14,6 +14,10 @@ from core.evidence.chunks import numbers_in, quantities_in
 from core.rules.schema import RuleError, normalize_rule
 
 TEMPLATES: list[dict[str, Any]] = [
+    {"id": "entity_exists", "name": "指定物件必須存在",
+     "sentence": "圖面中必須存在「{subject}」物件",
+     "needs": ["subject"], "optional": [],
+     "measurement": "entity_exists", "operator": ">=", "value": 1, "unit": "count"},
     {"id": "clearance", "name": "水平淨距不得小於",
      "sentence": "「{subject}」與「{target}」的水平淨距不得小於 {value} {unit}",
      "needs": ["subject", "target", "value", "unit"], "optional": ["warn_margin"],

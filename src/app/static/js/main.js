@@ -365,7 +365,9 @@ async function finishRun(run) {
   app.runs = runs.runs;
   updateRunUi();
   if (run.status === "completed") { await loadResults(); const c = run.summary.counts;
-    toast(`分析完成：不合格 ${c.FAIL}、警告 ${c.WARNING}、無法判定 ${c.UNKNOWN}、合格 ${c.PASS}。`); }
+    const cv = run.summary.coverage;
+    toast(`分析完成：不合格 ${c.FAIL}、警告 ${c.WARNING}、無法判定 ${c.UNKNOWN}、合格 ${c.PASS}。` +
+      (cv ? ` 規則覆蓋率 ${cv.percent}%（${cv.evaluated}/${cv.applicable}）。` : "")); }
   else if (run.status === "cancelled") toast("分析已取消。", "warn");
   else toast(`分析失敗：${run.error_message ?? "原因不明"}`, "error", 20000);
 }
@@ -376,6 +378,7 @@ const cancelRun = guard(async () => { if (app.run) { await api.post(`/api/runs/$
 function resetResults() {
   app.issues = []; app.total = 0; app.markers = []; app.selectedId = null; app.detail = null;
   clear($("#issue-list")); clear($("#chips")); $("#detail").hidden = true; $("#export-bar").hidden = true;
+  $("#coverage-summary").hidden = true; $("#coverage-summary").textContent = "";
   $("#baseline").hidden = true; $("#results-empty").hidden = false; $("#export-status").textContent = "";
   $("#results-tools").hidden = true;
   if (viewer) { viewer.setIssues([]); viewer.select(null); }
@@ -387,6 +390,7 @@ async function loadResults() {
   $("#results-tools").hidden = false;
   $("#export-bar").hidden = false;
   renderChips(run.summary.counts);
+  renderCoverage(run.summary.coverage);
   renderBaseline(run.summary.comparison);
   const all = await api.get(`/api/runs/${run.id}/issues?status=FAIL,WARNING,UNKNOWN&limit=5000`);
   app.allNonPass = all.items;
@@ -409,6 +413,22 @@ function renderChips(counts) {
         renderChips(counts); applyMarkers(); await loadIssues(true);
       }) }, el("b", {}, String(counts[s])), STATUS[s].zh));
   }
+}
+
+function renderCoverage(c) {
+  const box = $("#coverage-summary");
+  if (!c) { box.hidden = true; return; }
+  box.hidden = false;
+  const complete = c.applicable > 0 && c.evaluated === c.applicable;
+  box.classList.toggle("warn", !complete);
+  clear(box);
+  box.append(el("strong", {}, `規則覆蓋率 ${c.percent}%`),
+    document.createTextNode(`已載入 ${c.loaded}、適用 ${c.applicable}、已執行 ${c.evaluated}、未執行 ${c.skipped}。`),
+    document.createElement("br"),
+    document.createTextNode(`規則結果：不合格 ${c.failed}、警告 ${c.warning}、無法判定 ${c.undetermined}、合格 ${c.passed}。`));
+  box.append(document.createElement("br"), document.createTextNode(complete
+    ? "規則覆蓋率僅以本次已載入且適用的規則計算；未建模或未載入的工程要求不在本次判定範圍。"
+    : "本次分析僅覆蓋部分工程規則，不代表整體工程設計合格。"));
 }
 
 function renderBaseline(cmp) {

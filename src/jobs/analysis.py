@@ -124,6 +124,7 @@ def execute_run(repo: Repo, run_id: str, *, progress=None, cancel_check=None) ->
         "counts": out.counts,
         "total": len(out.results),
         "rule_stats": out.rule_stats,
+        "coverage": out.coverage,
         "entity_count": len(entities),
         "routes_total": len(out.routes),
         "routes_by_system": dict(sorted(by_system.items())),
