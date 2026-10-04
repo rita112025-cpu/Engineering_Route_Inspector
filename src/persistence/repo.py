@@ -49,6 +49,12 @@ class Repo:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
+    @property
+    def spec(self):
+        """Specification scan storage (source folder, scanned files, rule candidates, review decisions)."""
+        from .spec_store import SpecStore
+        return SpecStore(self.conn)
+
     def q(self, sql: str, args: Sequence = ()) -> list[dict]:
         return [dict(r) for r in self.conn.execute(sql, args)]
 

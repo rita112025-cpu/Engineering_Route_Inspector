@@ -1,6 +1,7 @@
 """Shared fixtures. Each test directory adds its own pytest marker."""
 from __future__ import annotations
 
+import os
 import re
 import socket
 import sys
@@ -12,6 +13,7 @@ import ezdxf
 import httpx
 import pytest
 
+os.environ.setdefault("ERI_SPEC_SOURCE", "")      # tests never read the owner's real specification folder by accident
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:

@@ -8,6 +8,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
 DEFAULT_PORT = 8765
+# Where the owner's specifications live. Used only when a project has not chosen its own source folder, and only
+# for reading: the scan never writes there. ERI_SPEC_SOURCE overrides it (an empty value turns the default off).
+DEFAULT_SPEC_SOURCE = r"F:\SCADA_主題導覽"
 
 
 class ConfigError(ValueError):
@@ -16,6 +19,13 @@ class ConfigError(ValueError):
 
 def default_data_dir() -> Path:
     return Path(os.environ.get("ERI_DATA_DIR") or REPO_ROOT / "data")
+
+
+def default_spec_source() -> str | None:
+    value = os.environ.get("ERI_SPEC_SOURCE")
+    if value is None:
+        return DEFAULT_SPEC_SOURCE
+    return value.strip() or None
 
 
 @dataclass(frozen=True)
@@ -27,6 +37,8 @@ class AppConfig:
     max_document_mb: int = 50
     max_json_kb: int = 5 * 1024
     max_workers: int = 1
+    max_spec_files: int = 5000
+    default_spec_source: str | None = field(default_factory=default_spec_source)
     static_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parent / "static")
     demo_dir: Path = field(default_factory=lambda: REPO_ROOT / "demo")
 

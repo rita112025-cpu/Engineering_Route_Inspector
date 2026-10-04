@@ -198,3 +198,50 @@ details.adv { margin-top: 16px; } details.adv summary { cursor: pointer; color: 
 .diag-checks { list-style: none; margin: 4px 0 12px; padding: 0; }
 .diag-checks li { padding: 3px 0; } .diag-checks li.ok b { color: var(--pass); } .diag-checks li.bad b { color: var(--fail); }
 .logtail { background: var(--panel-2); padding: 8px 10px; border-radius: 6px; overflow: auto; max-height: 220px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* specification source, scan summary, rule review */
+.spec-source { display: flex; flex-direction: column; gap: 6px; }
+.spec-label { font-size: 12px; color: var(--muted); }
+.spec-path { font-weight: 600; overflow-wrap: anywhere; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }
+.spec-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.spec-status, #run-hint { white-space: pre-line; }
+.spec-counts { list-style: none; margin: 10px 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.spec-counts li { display: flex; align-items: baseline; gap: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.spec-counts b { font-size: 20px; min-width: 1.6em; text-align: right; }
+.spec-counts span { font-size: 13px; color: var(--muted); }
+.spec-counts li[data-bucket="usable"] b { color: var(--pass); }
+.spec-counts li[data-bucket="review"] b, .spec-counts li[data-bucket="conflict"] b { color: var(--warn); }
+.adv-settings { margin-top: 10px; }
+.adv-settings summary { cursor: pointer; color: var(--muted); }
+.adv-label { display: block; margin-top: 10px; font-size: 12px; color: var(--muted); }
+#glossary-text { width: 100%; margin: 4px 0 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
+
+.rv-bar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.rv-bar input[type=search] { margin-left: auto; min-width: 200px; }
+.rv-list { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; background: var(--panel-2); }
+.rv-empty { color: var(--muted); text-align: center; padding: 30px 0; }
+.rv-gate { margin-right: auto; font-size: 13px; color: var(--muted); }
+.rv-card { border: 1px solid var(--line); border-left-width: 6px; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--panel); }
+.rv-card.CONFIRMED { border-left-color: var(--pass); }
+.rv-card.NEEDS_REVIEW, .rv-card.CONFLICTING { border-left-color: var(--warn); }
+.rv-card.NOT_ENFORCEABLE { border-left-color: var(--muted); }
+.rv-card.bucket-off { opacity: .65; }
+.rv-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.rv-badge { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 10px; }
+.rv-badge.CONFIRMED { background: var(--pass-bg); color: var(--pass); }
+.rv-badge.NEEDS_REVIEW, .rv-badge.CONFLICTING { background: var(--warn-bg); color: var(--warn); }
+.rv-badge.NOT_ENFORCEABLE { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.rv-zh, .rv-note, .rv-src, .rv-ref { font-size: 12px; color: var(--muted); }
+.rv-title { font-weight: 600; overflow-wrap: anywhere; }
+.rv-req { font-size: 16px; font-weight: 700; margin: 2px 0; }
+.rv-quote { margin: 4px 0; overflow-wrap: anywhere; }
+.rv-reason { margin: 2px 0 6px; color: var(--muted); font-size: 13px; }
+.rv-missing { margin: 6px 0; font-size: 13px; color: var(--warn); }
+.rv-missing ul { margin: 2px 0 0; padding-left: 20px; }
+.rv-evi { margin: 6px 0; padding: 6px 8px; background: var(--panel-2); border-radius: 6px; font-size: 13px; }
+.rv-evi q { display: block; margin-top: 2px; overflow-wrap: anywhere; }
+.rv-acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.rv-fix { display: inline-flex; gap: 4px; align-items: center; font-size: 13px; }
+.rv-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 8px; }
+.rv-option { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel-2); }
+.rv-list .more { width: 100%; }
