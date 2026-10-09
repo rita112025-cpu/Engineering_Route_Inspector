@@ -19,6 +19,9 @@
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--fg);
   font: 14px/1.5 "Segoe UI", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif; }
+html { scrollbar-color: var(--muted) var(--panel-2); }
+::selection { color: var(--accent-fg); background: var(--accent); }
+input, select, textarea { accent-color: var(--accent); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .noscript { padding: 16px; color: var(--fail); }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
@@ -114,7 +117,7 @@ progress { width: 100%; height: 14px; }
 .issue-list { flex: 1; min-height: 120px; overflow: auto; }
 .issue-list:empty { display: none; }
 .issue { display: grid; grid-template-columns: 70px 1fr; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line);
-  cursor: pointer; }
+  cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 64px; }
 .issue:hover { background: var(--panel-2); }
 .issue[aria-selected=true] { background: var(--unk-bg); box-shadow: inset 4px 0 0 var(--accent); }
 .issue .t { font-weight: 600; font-size: 13px; }
@@ -129,7 +132,7 @@ progress { width: 100%; height: 14px; }
 table.kv { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.kv th { text-align: left; vertical-align: top; color: var(--muted); font-weight: 500; padding: 3px 10px 3px 0; width: 112px; white-space: nowrap; }
 table.kv td { padding: 3px 0; overflow-wrap: anywhere; }
-blockquote.ev { margin: 4px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--panel-2); white-space: pre-wrap; }
+blockquote.ev { margin: 4px 0 0; padding: 6px 10px; border: 1px solid var(--line); background: var(--panel-2); white-space: pre-wrap; }
 .fixbox { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: var(--warn-bg); }
 .export-bar { border-top: 1px solid var(--line); padding: 8px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .export-label { font-weight: 600; margin-right: 4px; }
@@ -139,9 +142,9 @@ blockquote.ev { margin: 4px 0 0; padding: 6px 10px; border-left: 3px solid var(-
 /* toasts and dialogs */
 .toasts { position: fixed; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 50;
   max-width: min(420px, 92vw); pointer-events: none; }
-.toast { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-left-width: 6px; border-radius: 8px; padding: 10px 12px;
+.toast { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
   box-shadow: var(--shadow); display: flex; gap: 10px; align-items: flex-start; }
-.toast.ok { border-left-color: var(--pass); } .toast.error { border-left-color: var(--fail); } .toast.warn { border-left-color: var(--warn); }
+.toast.ok { border-color: var(--pass); } .toast.error { border-color: var(--fail); } .toast.warn { border-color: var(--warn); }
 .toast .msg { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
 .toast button { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 16px; }
 dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--fg); padding: 16px; box-shadow: var(--shadow); }
@@ -224,10 +227,10 @@ details.adv { margin-top: 16px; } details.adv summary { cursor: pointer; color: 
 .rv-list { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; background: var(--panel-2); }
 .rv-empty { color: var(--muted); text-align: center; padding: 30px 0; }
 .rv-gate { margin-right: auto; font-size: 13px; color: var(--muted); }
-.rv-card { border: 1px solid var(--line); border-left-width: 6px; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--panel); }
-.rv-card.CONFIRMED { border-left-color: var(--pass); }
-.rv-card.NEEDS_REVIEW, .rv-card.CONFLICTING { border-left-color: var(--warn); }
-.rv-card.NOT_ENFORCEABLE { border-left-color: var(--muted); }
+.rv-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--panel); }
+.rv-card.CONFIRMED { border-color: var(--pass); }
+.rv-card.NEEDS_REVIEW, .rv-card.CONFLICTING { border-color: var(--warn); }
+.rv-card.NOT_ENFORCEABLE { border-color: var(--muted); }
 .rv-card.bucket-off { opacity: .65; }
 .rv-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
 .rv-badge { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 10px; }

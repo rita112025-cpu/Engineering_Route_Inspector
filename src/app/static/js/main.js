@@ -61,8 +61,9 @@ async function refreshProject() {
   if (!app.drawing || !app.drawings.some((d) => d.id === app.drawing.id)) app.drawing = app.drawings[0] ?? null;
   else app.drawing = app.drawings.find((d) => d.id === app.drawing.id);
   renderDrawings(); renderDocs(); renderRulesSummary();
-  await refreshSpec();
-  await showDrawing();
+  // Specification metadata and drawing geometry are independent. Loading them
+  // together keeps the slower request from extending the project's critical path.
+  await Promise.all([refreshSpec(), showDrawing()]);
 }
 
 async function showDrawing() {
@@ -392,10 +393,10 @@ async function loadResults() {
   renderChips(run.summary.counts);
   renderCoverage(run.summary.coverage);
   renderBaseline(run.summary.comparison);
-  const all = await api.get(`/api/runs/${run.id}/issues?status=FAIL,WARNING,UNKNOWN&limit=5000`);
+  const markers = api.get(`/api/runs/${run.id}/issues?status=FAIL,WARNING,UNKNOWN&limit=5000`);
+  const [, all] = await Promise.all([loadIssues(true), markers]);
   app.allNonPass = all.items;
   applyMarkers();
-  await loadIssues(true);
   const first = app.issues.find((i) => i.status === "FAIL") ?? app.issues[0];
   if (first) await selectIssue(first.issue_id);
 }

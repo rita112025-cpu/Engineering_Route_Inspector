@@ -73,8 +73,10 @@ export class Viewer {
   // ---- view ------------------------------------------------------------------------------------------------
   resize() {
     const r = this.canvas.getBoundingClientRect();
-    this.dpr = window.devicePixelRatio || 1;
-    this.w = Math.max(1, Math.round(r.width)); this.h = Math.max(1, Math.round(r.height));
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+    if (w === this.w && h === this.h && dpr === this.dpr) return;
+    this.dpr = dpr; this.w = w; this.h = h;
     this.canvas.width = Math.round(this.w * this.dpr); this.canvas.height = Math.round(this.h * this.dpr);
     this.draw();
   }
@@ -112,7 +114,9 @@ export class Viewer {
     const after = this.toWorld(px, py);
     this.view.cx += before[0] - after[0];
     this.view.cy += before[1] - after[1];
-    this.draw();
+    // Wheel and trackpad input can emit several events inside one display
+    // frame. Coalesce them so a large drawing is rendered at most once per frame.
+    this.schedule();
   }
 
   toScreen(x, y) { return [(x - this.view.cx) * this.view.scale + this.w / 2, this.h / 2 - (y - this.view.cy) * this.view.scale]; }
@@ -154,10 +158,10 @@ export class Viewer {
       if (e.key === "+" || e.key === "=") this.zoomBy(1.25);
       else if (e.key === "-") this.zoomBy(0.8);
       else if (e.key === "0") this.fit();
-      else if (e.key === "ArrowLeft") { this.view.cx -= step; this.draw(); }
-      else if (e.key === "ArrowRight") { this.view.cx += step; this.draw(); }
-      else if (e.key === "ArrowUp") { this.view.cy += step; this.draw(); }
-      else if (e.key === "ArrowDown") { this.view.cy -= step; this.draw(); }
+      else if (e.key === "ArrowLeft") { this.view.cx -= step; this.schedule(); }
+      else if (e.key === "ArrowRight") { this.view.cx += step; this.schedule(); }
+      else if (e.key === "ArrowUp") { this.view.cy += step; this.schedule(); }
+      else if (e.key === "ArrowDown") { this.view.cy -= step; this.schedule(); }
       else return;
       e.preventDefault();
     });
