@@ -7,3 +7,6 @@ benchmark_out/
 *.egg-info/
 dist/
 .tmp-codex-*/
+
+hyperforge_anvil.ico
+hyperforge_furnace.ico
