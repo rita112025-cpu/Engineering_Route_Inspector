@@ -183,8 +183,10 @@ class RuleEvaluator:
     # -- evaluation -----------------------------------------------------
     def evaluate(self) -> list[RuleResult]:
         m = self.m
-        if m == "entity_count":
+        if m in ("entity_count", "entity_exists"):
             return self.eval_count()
+        if m == "connectivity":
+            return self.eval_connectivity()
         if m in ("length", "angle", "off_axis_angle"):
             return self.eval_single()
         if m in ("inside_zone", "outside_zone"):
@@ -206,6 +208,83 @@ class RuleEvaluator:
                           {"matched_handles": [s.handle for s in subjects[:200]]})
         res.fix = "" if ok else self.fix_text(n, "相關物件")
         return [res]
+
+    def eval_connectivity(self) -> list[RuleResult]:
+        """Evaluate 2D polyline endpoint connectivity using an explicit tolerance."""
+        selected = _selects(self.rule["subject"], self.ctx)
+        supported = [e for e in selected if e.kind == "polyline" and e.segments()]
+        unsupported = [e for e in selected if e not in supported]
+        if not selected:
+            return [self.result("UNKNOWN", None, (), None, None,
+                                "找不到連通性規則指定的圖元，無法判定路徑是否連續。",
+                                "Insufficient evidence：圖面沒有符合 subject selector 的圖元")]
+        if unsupported:
+            subject = unsupported[0]
+            return [self.result(
+                "UNKNOWN", subject, (), None, subject.center(),
+                "選取範圍包含目前無法進行端點連通分析的圖元。",
+                f"Unsupported geometry：{subject.entity_type} 沒有可用的 polyline endpoints",
+                {"unsupported_handles": [e.handle for e in unsupported[:200]]})]
+        if len(supported) == 1:
+            subject = supported[0]
+            return [self.result("UNKNOWN", subject, (), None, subject.center(),
+                                "只有一個路徑圖元，沒有其他線段可供驗證連通性。",
+                                "Insufficient evidence：至少需要兩個 polyline 圖元")]
+
+        tolerance = float(self.rule["snap_tolerance_mm"]) / self.ctx.unit_to_mm
+        parent = list(range(len(supported)))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i, j):
+            a, b = find(i), find(j)
+            if a != b:
+                parent[max(a, b)] = min(a, b)
+
+        endpoints = []
+        for e in supported:
+            pts = e.vertices()
+            endpoints.append((pts[0], pts[-1]))
+        endpoint_grid: dict[tuple[int, int] | tuple[float, float], list[tuple[int, tuple]]] = {}
+        for i, ends in enumerate(endpoints):
+            self._check()
+            for point in ends:
+                if tolerance <= EPS:
+                    key = (point[0], point[1])
+                    neighbor_keys = (key,)
+                else:
+                    key = (math.floor(point[0] / tolerance), math.floor(point[1] / tolerance))
+                    neighbor_keys = tuple((key[0] + dx, key[1] + dy)
+                                          for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+                for neighbor in neighbor_keys:
+                    for j, other_point in endpoint_grid.get(neighbor, ()):
+                        if i != j and math.dist(point, other_point) <= tolerance + EPS:
+                            union(i, j)
+                endpoint_grid.setdefault(key, []).append((i, point))
+        components: dict[int, list[int]] = {}
+        for i in range(len(supported)):
+            components.setdefault(find(i), []).append(i)
+        first = supported[0]
+        if len(components) == 1:
+            return [self.result(
+                "PASS", first, supported[1:2], 1.0, first.center(),
+                f"{len(supported)} 個路徑圖元在 {self.rule['snap_tolerance_mm']:g} mm 端點容差內形成單一連通路徑。",
+                "以 polyline 首尾端點進行 2D 連通分析",
+                {"component_count": 1, "entity_count": len(supported)})]
+        groups = list(components.values())
+        other = supported[groups[1][0]]
+        result = self.result(
+            self.rule["severity"], first, [other], 0.0, other.center(),
+            f"路徑分成 {len(components)} 個不連通群組。",
+            f"端點在 {self.rule['snap_tolerance_mm']:g} mm 容差內仍未連接",
+            {"component_count": len(components),
+             "components": [[supported[i].handle for i in group[:200]] for group in groups]})
+        result.fix = "連接斷開的路徑端點，或確認圖面是否缺少路徑線段。"
+        return [result]
 
     def eval_single(self) -> list[RuleResult]:
         out = []
@@ -364,14 +443,10 @@ class RuleEvaluator:
         for s in subjects:
             self._check()
             if not any_target:
-                if quant == "any":
-                    out.append(self.result("UNKNOWN", s, (), None, s.center(),
-                                           f"圖面中沒有符合「{P.describe(target_pred)}」的物件，無法判定 {label(s)}。",
-                                           "Insufficient evidence：找不到目標物件"))
-                else:
-                    out.append(self.result("PASS", s, (), None, s.center(),
-                                           f"圖面中沒有符合「{P.describe(target_pred)}」的物件，{label(s)} 無衝突對象。",
-                                           "無目標物件"))
+                out.append(self.result(
+                    "UNKNOWN", s, (), None, s.center(),
+                    f"圖面中沒有符合「{P.describe(target_pred)}」的物件，無法判定 {label(s)}。",
+                    "Insufficient evidence：找不到目標物件"))
                 continue
             sid = ctx.pos[id(s)]
             if within_mode:

@@ -38,6 +38,21 @@ class Report:
     def counts(self) -> dict[str, int]:
         return self.summary.get("counts", {})
 
+    @property
+    def coverage(self) -> dict:
+        return self.summary.get("coverage", {})
+
+    @property
+    def coverage_complete(self) -> bool:
+        c = self.coverage
+        return bool(c.get("applicable")) and c.get("evaluated") == c.get("applicable")
+
+    @property
+    def coverage_notice(self) -> str:
+        if self.coverage_complete:
+            return "規則覆蓋率僅以本次已載入且適用的規則計算；未建模或未載入的工程要求不在本次判定範圍。"
+        return "本次分析僅覆蓋部分工程規則，不代表整體工程設計合格。"
+
     def issues_by_status(self, *statuses: str) -> list[dict]:
         return [i for i in self.issues if i["status"] in statuses]
 

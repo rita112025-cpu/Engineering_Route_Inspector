@@ -101,10 +101,11 @@ def test_documents_and_evidence_search(live):
 
 def test_rule_templates_build_valid_rules(live):
     templates = live.http.get("/api/rule-templates").json()["templates"]
-    assert {t["id"] for t in templates} >= {"clearance", "no_crossing", "keep_out", "inside_zone", "max_distance",
+    assert {t["id"] for t in templates} >= {"entity_exists", "clearance", "no_crossing", "keep_out", "inside_zone", "max_distance",
                                              "max_length", "orthogonal", "min_count", "vertical_clearance"}
     pid = live.http.post("/api/projects", json={"name": "P"}).json()["id"]
     params = {
+        "entity_exists": {"subject": {"system": "A"}},
         "clearance": {"subject": {"system": "A"}, "target": {"system": "B"}, "value": 300, "unit": "mm"},
         "vertical_clearance": {"subject": {"system": "A"}, "target": {"system": "B"}, "value": 0.2, "unit": "m"},
         "no_crossing": {"subject": {"system": "A"}, "target": {"layer": "WATER"}},
@@ -152,6 +153,10 @@ def test_analysis_end_to_end(live, project):
     run = wait_run(live, r.json()["id"])
     assert run["status"] == "completed" and run["progress"] == 1
     assert run["summary"]["counts"] == {"FAIL": 1, "WARNING": 1, "PASS": 1, "UNKNOWN": 1}
+    assert run["summary"]["coverage"] == {
+        "loaded": 1, "applicable": 1, "evaluated": 1, "skipped": 0,
+        "passed": 0, "failed": 1, "warning": 0, "undetermined": 0, "percent": 100.0,
+    }
     assert run["stage_label"] == "完成" and run["summary"]["comparison"] is None
     # the issue list: the four outcomes, worst first
     page = live.http.get(f"/api/runs/{run['id']}/issues").json()

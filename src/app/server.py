@@ -115,9 +115,14 @@ def create_app(config: AppConfig) -> Starlette:
         lifespan=lifespan)
 
 
+RESERVED_PORTS = frozenset({8766})   # Engineering Revision Intelligence's fixed port: never take it over as a fallback
+
+
 def find_free_port(host: str, start: int, tries: int = 20) -> int:
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     for port in range(start, start + tries):
+        if port in RESERVED_PORTS:
+            continue
         with socket.socket(family, socket.SOCK_STREAM) as s:
             try:
                 s.bind((host, port))

@@ -16,8 +16,9 @@ def test_first_time_user_with_the_demo(ui, tmp_path):
     page.wait_for_function("() => document.querySelector('#project-select option:checked').textContent.includes('示範專案')")
     page.wait_for_selector("#drawing-list li")
     assert page.inner_text("#drawing-list li .name") == "demo_plan.dxf"
+    page.evaluate("() => { document.querySelector('#adv-settings').open = true; }")     # 進階設定
     assert page.inner_text("#doc-list li .name") == "demo_spec.md"
-    assert "5 條規則" in page.inner_text("#rules-summary-text")
+    assert "5 條" in page.inner_text("#rules-summary-text")
     page.wait_for_function("() => window.eri.viewer.hasDrawing()")
     assert canvas_probe(page)["nonBg"] > 500
     assert page.is_enabled("#run-btn")

@@ -32,6 +32,17 @@ def render_markdown(report: Report) -> bytes:
     units = "圖面未宣告單位，以 mm 推定" if report.summary.get("units_assumed") else f"1 圖面單位 = {report.summary.get('unit_to_mm')} mm"
     w(f"| 單位 | {esc(units)} |\n")
 
+    cov = report.coverage
+    w("## 分析狀態與規則覆蓋率\n")
+    w("| 已載入規則 | 適用規則 | 已執行 | 未執行 | 覆蓋率 |\n|---:|---:|---:|---:|---:|")
+    w(f"| {cov.get('loaded', 0)} | {cov.get('applicable', 0)} | {cov.get('evaluated', 0)} | "
+      f"{cov.get('skipped', 0)} | {cov.get('percent', 0):g}% |\n")
+    w("| 規則合格 | 規則不合格 | 規則警告 | 規則無法判定 |\n|---:|---:|---:|---:|")
+    w(f"| {cov.get('passed', 0)} | {cov.get('failed', 0)} | {cov.get('warning', 0)} | "
+      f"{cov.get('undetermined', 0)} |\n")
+    if report.coverage_notice:
+        w(f"> 注意：{report.coverage_notice}\n")
+
     w("## 結果總覽\n")
     w("| 不合格 | 警告 | 無法判定 | 合格 |\n|---:|---:|---:|---:|")
     w(f"| {c.get('FAIL', 0)} | {c.get('WARNING', 0)} | {c.get('UNKNOWN', 0)} | {c.get('PASS', 0)} |\n")
@@ -59,7 +70,10 @@ def render_markdown(report: Report) -> bytes:
     shown = report.issues_by_status("FAIL", "WARNING", "UNKNOWN")
     w("## 問題清單\n")
     if not shown:
-        w("沒有不合格、警告或無法判定的項目。\n")
+        if report.coverage_complete:
+            w("未發現已執行規則中的不合格、警告或無法判定項目。\n")
+        else:
+            w("未發現已執行規則中的不合格項目；仍有規則未執行。\n")
     written = 0
     for status in ("FAIL", "WARNING", "UNKNOWN"):
         group = [i for i in shown if i["status"] == status]

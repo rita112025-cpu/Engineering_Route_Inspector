@@ -86,6 +86,8 @@ def render_html(report: Report, entities: list[dict]) -> bytes:
     units = ("圖面未宣告單位，以 mm 推定" if report.summary.get("units_assumed")
              else f"1 圖面單位 = {report.summary.get('unit_to_mm')} mm")
     notes = list(report.summary.get("warnings", []))
+    if report.coverage_notice:
+        notes.insert(0, report.coverage_notice)
     if left_out:
         notes.append(f"圖面物件過多，示意圖省略 {left_out} 個與問題無關的物件。")
     if len(passes) > MAX_PASS_ROWS:
@@ -93,6 +95,7 @@ def render_html(report: Report, entities: list[dict]) -> bytes:
     data = {
         "colors": STATUS_COLOR, "viewBox": viewbox, "issues": payload_issues,
         "counts": {k: c.get(k, 0) for k in ("FAIL", "WARNING", "UNKNOWN", "PASS")},
+        "coverage": report.coverage,
     }
     meta_rows = [
         ("專案", report.project["name"]), ("圖面", report.drawing["logical_name"]),
@@ -174,6 +177,8 @@ var ZH={FAIL:"不合格",WARNING:"警告",UNKNOWN:"無法判定",PASS:"合格"};
 var active={FAIL:true,WARNING:true,UNKNOWN:true,PASS:false},query="",selected=null,vb0=D.viewBox.split(" ").map(Number);
 function el(tag,attrs,text){var e=document.createElement(tag);if(attrs)for(var k in attrs)e.setAttribute(k,attrs[k]);if(text!=null)e.textContent=text;return e;}
 var cards=document.getElementById("cards");
+var cv=el("div",{"class":"card"});cv.appendChild(el("b",null,String(D.coverage.percent||0)+"%"));cv.appendChild(document.createTextNode("規則覆蓋率 "+String(D.coverage.evaluated||0)+" / "+String(D.coverage.applicable||0)));cards.appendChild(cv);
+var cr=el("div",{"class":"card"});cr.appendChild(el("b",null,String(D.coverage.evaluated||0)));cr.appendChild(document.createTextNode("規則結果 F "+String(D.coverage.failed||0)+" / W "+String(D.coverage.warning||0)+" / U "+String(D.coverage.undetermined||0)+" / P "+String(D.coverage.passed||0)));cards.appendChild(cr);
 ["FAIL","WARNING","UNKNOWN","PASS"].forEach(function(s){var c=el("div",{"class":"card "+s});c.appendChild(el("b",null,String(D.counts[s])));c.appendChild(document.createTextNode(ZH[s]));cards.appendChild(c);});
 var filters=document.getElementById("filters");
 ["FAIL","WARNING","UNKNOWN","PASS"].forEach(function(s){var b=el("button",{type:"button","aria-pressed":String(active[s])},ZH[s]);b.onclick=function(){active[s]=!active[s];b.setAttribute("aria-pressed",String(active[s]));render();};filters.appendChild(b);});

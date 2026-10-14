@@ -93,6 +93,7 @@ _UNIT_WORDS = {
     "in": "in", "inch": "in", "inches": "in", "吋": "in", "英吋": "in",
     "°": "deg", "度": "deg", "deg": "deg", "degree": "deg", "degrees": "deg",
 }
+UNIT_WORDS = _UNIT_WORDS     # public name for importers of the unit vocabulary (rule extraction)
 _QTY_RE = re.compile(
     r"(?<![\d.])(?<!\d,)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*("
     + "|".join(re.escape(w) for w in sorted(_UNIT_WORDS, key=len, reverse=True))

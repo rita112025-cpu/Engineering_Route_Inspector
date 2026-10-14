@@ -37,6 +37,8 @@ def done(env, sample_dxf):
 def test_sample_run_has_all_four_outcomes(done):
     _, _, run = done
     assert run["summary"]["counts"] == {"FAIL": 1, "WARNING": 1, "PASS": 1, "UNKNOWN": 1}
+    assert run["summary"]["coverage"]["evaluated"] == 1
+    assert run["summary"]["coverage"]["percent"] == 100.0
 
 
 def test_report_collects_evidence_and_rules(env, done):

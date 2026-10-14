@@ -1,7 +1,9 @@
 // Page logic. The flow it serves:
-//   drag a drawing -> drag the specification -> start analysis -> click a red issue -> read why -> export
+//   drag a drawing -> scan the specification folder -> confirm only the doubtful rules -> start analysis
+//   -> click a red issue -> read why -> export
 import { api, ApiError } from "./api.js";
 import { openRuleBuilder } from "./rules.js";
+import { gateLines, openReview } from "./review.js";
 import { Viewer, entitiesBox } from "./viewer.js";
 import { $, BASELINE_ZH, CONFIDENCE_ZH, STATUS, ask, clear, debounce, el, fmtBytes, fmtNumber, store, toast } from "./util.js";
 
@@ -14,6 +16,7 @@ const app = {
   projects: [], project: null, drawings: [], documents: [], ruleset: { systems: [], rules: [] }, drawing: null,
   run: null, filters: new Set(["FAIL", "WARNING", "UNKNOWN"]), search: "", sort: "severity",
   issues: [], total: 0, markers: [], selectedId: null, detail: null, pollTimer: null, exporting: false,
+  spec: null, scanTimer: null,
 };
 let viewer;
 
@@ -44,8 +47,8 @@ async function loadProjects(selectId) {
 async function openProject(id) {
   app.project = app.projects.find((p) => p.id === id);
   store.set("eri.project", id);
-  stopPolling();
-  app.run = null; resetResults();
+  stopPolling(); stopScanPolling();
+  app.run = null; app.spec = null; resetResults();
   await refreshProject();
 }
 
@@ -58,7 +61,9 @@ async function refreshProject() {
   if (!app.drawing || !app.drawings.some((d) => d.id === app.drawing.id)) app.drawing = app.drawings[0] ?? null;
   else app.drawing = app.drawings.find((d) => d.id === app.drawing.id);
   renderDrawings(); renderDocs(); renderRulesSummary();
-  await showDrawing();
+  // Specification metadata and drawing geometry are independent. Loading them
+  // together keeps the slower request from extending the project's critical path.
+  await Promise.all([refreshSpec(), showDrawing()]);
 }
 
 async function showDrawing() {
@@ -94,7 +99,11 @@ function renderDrawings() {
 
 function renderDocs() {
   const ul = clear($("#doc-list"));
-  for (const d of app.documents) {
+  const MAX = 15;
+  if (app.documents.length > MAX) {
+    ul.append(el("li", {}, el("span", { class: "name" }, `已匯入 ${app.documents.length} 份規範（只列出最近 ${MAX} 份）`)));
+  }
+  for (const d of app.documents.slice(0, MAX)) {
     ul.append(el("li", {},
       el("span", { class: "name", title: d.filename }, d.filename),
       el("span", { class: "meta" }, `${d.chunk_count} 段`),
@@ -104,8 +113,123 @@ function renderDocs() {
 
 function renderRulesSummary() {
   const n = app.ruleset.rules.length, on = enabledRules().length;
-  $("#rules-summary-text").textContent = n ? `已建立 ${n} 條規則${on < n ? `（${on} 條啟用）` : ""}` : "尚未建立規則";
+  const auto = app.ruleset.rules.filter((r) => r.origin?.type === "spec-extraction").length;
+  $("#rules-summary-text").textContent = n
+    ? `規則檔共 ${n} 條${on < n ? `（${on} 條啟用）` : ""}${auto ? `，其中 ${auto} 條來自規範擷取` : ""}`
+    : "規則檔裡還沒有規則（分析時會自動加入確認過的規範規則）";
 }
+
+// ---- specification source, scan and rule candidates -----------------------------------------------------------------------
+function stopScanPolling() { clearTimeout(app.scanTimer); app.scanTimer = null; }
+
+async function refreshSpec() {
+  if (!app.project) return;
+  const pid = app.project.id;
+  const spec = await api.get(`/api/projects/${pid}/spec-source`);
+  if (!app.project || app.project.id !== pid) return;
+  app.spec = spec;
+  renderSpec();
+  updateRunUi();
+  if (spec.scan?.state === "running" && !app.scanTimer) pollScan();
+}
+
+function renderSpecCounts() {
+  const s = app.spec?.summary ?? {};
+  for (const k of ["usable", "review", "conflict", "not_enforceable"]) $(`#cnt-${k}`).textContent = String(s[k] ?? 0);
+  $("#spec-counts").hidden = !app.spec?.last_scan && !(s.total > 0);
+  $("#review-open").disabled = !(s.total > 0);
+}
+
+function renderSpec() {
+  const spec = app.spec;
+  if (!spec) return;
+  const path = $("#spec-path");
+  path.textContent = spec.path ?? "（尚未設定資料夾）";
+  path.title = spec.path ?? "";
+  const running = spec.scan?.state === "running";
+  $("#spec-scan").disabled = running || (!spec.path && !spec.documents);
+  $("#spec-scan").textContent = spec.last_scan ? "重新掃描" : "掃描規範";
+  $("#spec-change").disabled = running;
+  const bar = $("#spec-progress");
+  bar.hidden = !running;
+  if (running) bar.value = spec.scan.total ? Math.round((100 * spec.scan.done) / spec.scan.total) : 0;
+  $("#spec-status").textContent = specStatusText(spec);
+  const gl = $("#glossary-text");
+  if (document.activeElement !== gl) gl.value = spec.glossary?.text ?? "";
+  renderSpecCounts();
+}
+
+function specStatusText(spec) {
+  const scan = spec.scan ?? {};
+  if (scan.state === "running") return `掃描中… ${scan.done ?? 0} / ${scan.total ?? 0}${scan.current ? `　${scan.current}` : ""}`;
+  if (scan.state === "failed") return `掃描失敗：${scan.error}`;
+  if (!spec.path) {
+    return spec.documents ? `還沒有設定規範來源資料夾。按「掃描規範」會整理已匯入的 ${spec.documents} 份規範；也可以按「變更資料夾」。`
+      : "還沒有設定規範來源資料夾，請按「變更資料夾」輸入路徑。";
+  }
+  if (!spec.exists) return "找不到這個資料夾（磁碟是否已連接？）。可以按「變更資料夾」改成別的位置。";
+  const bits = [];
+  if (spec.origin === "default") bits.push("使用預設資料夾。");
+  const last = spec.last_scan;
+  if (last) {
+    bits.push(`上次掃描：${last.files} 個檔案（新增 ${last.new}、重新解析 ${last.reparsed}、沿用 ${last.reused}${last.removed ? `、移除 ${last.removed}` : ""}）。`);
+    if (last.not_extractable) bits.push(`${last.not_extractable} 個檔案沒有可讀的文字（例如掃描影像的 PDF，本工具不做 OCR），無法擷取規則。`);
+    if (last.unreadable) bits.push(`${last.unreadable} 個檔案無法讀取。`);
+    if (last.too_large) bits.push(`${last.too_large} 個檔案太大，已略過。`);
+  } else bits.push(spec.documents ? `尚未掃描（已另外匯入 ${spec.documents} 份規範）。` : "尚未掃描。按「掃描規範」整理規則。");
+  return bits.join("\n");
+}
+
+const changeSource = guard(async () => {
+  const value = await ask({ title: "規範來源資料夾", ok: "設定", input: app.spec?.path ?? "",
+    text: "輸入放規範的資料夾完整路徑（例如 F:\\SCADA_主題導覽）。程式只會讀取這個資料夾，不會修改裡面的檔案。留空代表使用預設資料夾。" });
+  if (value === null) return;
+  app.spec = await api.put(`/api/projects/${app.project.id}/spec-source`, { path: value || null });
+  renderSpec(); updateRunUi();
+  toast(app.spec.path ? "已設定規範來源。接著按「掃描規範」。" : "已改回預設資料夾。");
+});
+
+const startScan = guard(async () => {
+  if (!app.spec?.path && !app.spec?.documents) { await changeSource(); if (!app.spec?.path) return; }
+  const state = await api.post(`/api/projects/${app.project.id}/spec-scan`, {});
+  app.spec.scan = state;
+  renderSpec();
+  pollScan();
+});
+
+function pollScan() {
+  stopScanPolling();
+  const pid = app.project.id;
+  const tick = async () => {
+    try {
+      const state = await api.get(`/api/projects/${pid}/spec-scan`);
+      if (!app.project || app.project.id !== pid) return;
+      app.spec.scan = state;
+      renderSpec();
+      if (state.state === "running") { app.scanTimer = setTimeout(tick, 500); return; }
+      app.scanTimer = null;
+      await refreshProject();
+      if (state.state === "done") {
+        const c = state.summary.counts;
+        toast(`掃描完成：可直接使用 ${c.usable}、需要確認 ${c.review}、規範衝突 ${c.conflict}、無法自動檢查 ${c.not_enforceable}。`);
+      } else if (state.state === "failed") toast(`掃描失敗：${state.error}`, "error", 20000);
+    } catch (e) {
+      app.scanTimer = null;
+      toast(e instanceof ApiError ? e.message : String(e), "error");
+    }
+  };
+  tick();
+}
+
+const saveGlossary = guard(async () => {
+  app.spec = await api.put(`/api/projects/${app.project.id}/spec-source`, { glossary_text: $("#glossary-text").value });
+  renderSpec(); updateRunUi();
+  toast("已儲存名詞對照，規則的對象已重新對應。");
+});
+
+const openReviewDialog = guard(() => openReview({
+  project: app.project, drawing: app.drawing, systems: app.ruleset.systems, onRun: startRun,
+  onChange: (summary, gate) => { if (app.spec) { app.spec.summary = summary; app.spec.gate = gate; renderSpecCounts(); updateRunUi(); } } }));
 
 async function removeDrawing(d) {
   if (!(await ask({ title: `刪除圖面「${d.logical_name}」？`, text: "這份圖面的分析結果也會一起刪除。", ok: "刪除", danger: true }))) return;
@@ -188,11 +312,14 @@ function wireDrop(zone, input, accept) {
 function updateRunUi() {
   const btn = $("#run-btn"), hint = $("#run-hint");
   const active = app.run && ACTIVE.includes(app.run.status);
-  const rules = enabledRules().length;
+  const gate = app.spec?.gate;
+  const rules = gate ? gate.will_run : enabledRules().length;       // confirmed rules + enabled hand-made rules
   btn.disabled = !app.drawing || !rules || !!active;
   hint.textContent = !app.drawing ? "請先匯入圖面。"
-    : !rules ? "還沒有規則：按上方「編輯規則…」，用句型建立規則（可以把規範段落拖進去）。"
-    : active ? "分析進行中…" : `會用 ${rules} 條規則檢查「${app.drawing.logical_name}」。`;
+    : !rules ? "還沒有可執行的規則：請先按「掃描規範」並確認規則，或到「進階設定」用手動規則編輯器建立。"
+    : active ? "分析進行中…"
+    : gate ? `檢查「${app.drawing.logical_name}」，目前：\n${gateLines(gate).join("\n")}`
+    : `會用 ${rules} 條規則檢查「${app.drawing.logical_name}」。`;
   $("#progress-box").hidden = !active;
 }
 
@@ -239,7 +366,9 @@ async function finishRun(run) {
   app.runs = runs.runs;
   updateRunUi();
   if (run.status === "completed") { await loadResults(); const c = run.summary.counts;
-    toast(`分析完成：不合格 ${c.FAIL}、警告 ${c.WARNING}、無法判定 ${c.UNKNOWN}、合格 ${c.PASS}。`); }
+    const cv = run.summary.coverage;
+    toast(`分析完成：不合格 ${c.FAIL}、警告 ${c.WARNING}、無法判定 ${c.UNKNOWN}、合格 ${c.PASS}。` +
+      (cv ? ` 規則覆蓋率 ${cv.percent}%（${cv.evaluated}/${cv.applicable}）。` : "")); }
   else if (run.status === "cancelled") toast("分析已取消。", "warn");
   else toast(`分析失敗：${run.error_message ?? "原因不明"}`, "error", 20000);
 }
@@ -250,6 +379,7 @@ const cancelRun = guard(async () => { if (app.run) { await api.post(`/api/runs/$
 function resetResults() {
   app.issues = []; app.total = 0; app.markers = []; app.selectedId = null; app.detail = null;
   clear($("#issue-list")); clear($("#chips")); $("#detail").hidden = true; $("#export-bar").hidden = true;
+  $("#coverage-summary").hidden = true; $("#coverage-summary").textContent = "";
   $("#baseline").hidden = true; $("#results-empty").hidden = false; $("#export-status").textContent = "";
   $("#results-tools").hidden = true;
   if (viewer) { viewer.setIssues([]); viewer.select(null); }
@@ -261,11 +391,12 @@ async function loadResults() {
   $("#results-tools").hidden = false;
   $("#export-bar").hidden = false;
   renderChips(run.summary.counts);
+  renderCoverage(run.summary.coverage);
   renderBaseline(run.summary.comparison);
-  const all = await api.get(`/api/runs/${run.id}/issues?status=FAIL,WARNING,UNKNOWN&limit=5000`);
+  const markers = api.get(`/api/runs/${run.id}/issues?status=FAIL,WARNING,UNKNOWN&limit=5000`);
+  const [, all] = await Promise.all([loadIssues(true), markers]);
   app.allNonPass = all.items;
   applyMarkers();
-  await loadIssues(true);
   const first = app.issues.find((i) => i.status === "FAIL") ?? app.issues[0];
   if (first) await selectIssue(first.issue_id);
 }
@@ -283,6 +414,22 @@ function renderChips(counts) {
         renderChips(counts); applyMarkers(); await loadIssues(true);
       }) }, el("b", {}, String(counts[s])), STATUS[s].zh));
   }
+}
+
+function renderCoverage(c) {
+  const box = $("#coverage-summary");
+  if (!c) { box.hidden = true; return; }
+  box.hidden = false;
+  const complete = c.applicable > 0 && c.evaluated === c.applicable;
+  box.classList.toggle("warn", !complete);
+  clear(box);
+  box.append(el("strong", {}, `規則覆蓋率 ${c.percent}%`),
+    document.createTextNode(`已載入 ${c.loaded}、適用 ${c.applicable}、已執行 ${c.evaluated}、未執行 ${c.skipped}。`),
+    document.createElement("br"),
+    document.createTextNode(`規則結果：不合格 ${c.failed}、警告 ${c.warning}、無法判定 ${c.undetermined}、合格 ${c.passed}。`));
+  box.append(document.createElement("br"), document.createTextNode(complete
+    ? "規則覆蓋率僅以本次已載入且適用的規則計算；未建模或未載入的工程要求不在本次判定範圍。"
+    : "本次分析僅覆蓋部分工程規則，不代表整體工程設計合格。"));
 }
 
 function renderBaseline(cmp) {
@@ -442,7 +589,11 @@ function bind() {
   window.addEventListener("dragover", (e) => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); });
   window.addEventListener("drop", (e) => { if (e.dataTransfer?.files.length) { e.preventDefault(); importFiles([...e.dataTransfer.files]); } });
   $("#rules-open").addEventListener("click", guard(() => openRuleBuilder({
-    project: app.project, drawing: app.drawing, onSaved: guard(async () => { await refreshRules(); }) })));
+    project: app.project, drawing: app.drawing, onSaved: guard(async () => { await refreshRules(); await refreshSpec(); }) })));
+  $("#spec-change").addEventListener("click", changeSource);
+  $("#spec-scan").addEventListener("click", startScan);
+  $("#review-open").addEventListener("click", openReviewDialog);
+  $("#glossary-save").addEventListener("click", saveGlossary);
   $("#run-btn").addEventListener("click", startRun);
   $("#cancel-btn").addEventListener("click", cancelRun);
   $("#view-fit").addEventListener("click", () => viewer.fit());

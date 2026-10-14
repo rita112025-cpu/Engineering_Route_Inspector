@@ -39,6 +39,7 @@ class AnalysisOutput:
     timings: dict[str, float]
     counts: dict[str, int]
     rule_stats: list[dict]
+    coverage: dict[str, int | float]
     evidence_used: dict[str, EvidenceChunk] = field(default_factory=dict)
 
 
@@ -159,7 +160,8 @@ def run_analysis(entities: list[GeometryEntity], ruleset: dict, *, drawing_key: 
         evidence_resolver=lambda ref: find_by_quote(ev_list, ref.get("quote", ""), ref.get("document")),
         cancel_check=cancel_check,
     )
-    rules = [r for r in ruleset.get("rules", []) if r.get("enabled", True)]
+    loaded_rules = list(ruleset.get("rules", []))
+    rules = [r for r in loaded_rules if r.get("enabled", True)]
     results: list[RuleResult] = []
     rule_stats = []
     for n, rule in enumerate(rules):
@@ -169,9 +171,12 @@ def run_analysis(entities: list[GeometryEntity], ruleset: dict, *, drawing_key: 
         rr = evaluate_rule(rule, ctx)
         results.extend(rr)
         c = Counter(r.status for r in rr)
+        outcome = next((s for s in ("FAIL", "WARNING", "UNKNOWN", "PASS") if c[s]), None)
         rule_stats.append({"rule_id": rule["id"], "name": rule["name"], "severity": rule["severity"],
                            "measurement": rule["measurement"],
                            "FAIL": c["FAIL"], "WARNING": c["WARNING"], "PASS": c["PASS"], "UNKNOWN": c["UNKNOWN"],
+                           "execution": "evaluated" if rr else "skipped", "outcome": outcome,
+                           "skip_reason": "no matching subject entities" if not rr else None,
                            "seconds": round(time.perf_counter() - rt, 4),
                            "evidence_id": rr[0].evidence_id if rr else None})
         progress("rules", 0.35 + 0.45 * (n + 1) / max(1, len(rules)), where)
@@ -197,8 +202,19 @@ def run_analysis(entities: list[GeometryEntity], ruleset: dict, *, drawing_key: 
     stage("results", 0.92)
     assign_ids(drawing_key, results)
     counts = Counter(r.status for r in results)
+    evaluated = sum(s["execution"] == "evaluated" for s in rule_stats)
+    outcomes = Counter(s["outcome"] for s in rule_stats if s["outcome"])
+    applicable = len(rules)
+    coverage = {
+        "loaded": len(loaded_rules), "applicable": applicable, "evaluated": evaluated,
+        "skipped": applicable - evaluated,
+        "passed": outcomes["PASS"], "failed": outcomes["FAIL"],
+        "warning": outcomes["WARNING"], "undetermined": outcomes["UNKNOWN"],
+        "percent": round(100.0 * evaluated / applicable, 1) if applicable else 0.0,
+    }
     return AnalysisOutput(
         results=results, routes=routes, timings=timings,
         counts={k: counts.get(k, 0) for k in ("FAIL", "WARNING", "PASS", "UNKNOWN")},
-        rule_stats=rule_stats, evidence_used={k: v for k, v in used.items() if v is not None},
+        rule_stats=rule_stats, coverage=coverage,
+        evidence_used={k: v for k, v in used.items() if v is not None},
     )

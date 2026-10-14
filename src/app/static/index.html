@@ -40,17 +40,41 @@
     </section>
 
     <section class="step" id="step-spec">
-      <h2><span class="num">2</span>規範</h2>
-      <div class="drop" id="drop-spec" tabindex="0" role="button" aria-label="匯入規範：把 PDF、Word、TXT 或 Markdown 檔拖到這裡，或按 Enter 選擇檔案">
-        <strong>把規範拖到這裡</strong>
-        <small>PDF、Word（.docx）、TXT、Markdown</small>
-        <input type="file" id="file-spec" accept=".pdf,.docx,.txt,.md,.markdown" multiple hidden>
+      <h2><span class="num">2</span>規範與規則</h2>
+      <div class="spec-source" id="spec-source">
+        <div class="spec-label">規範來源</div>
+        <div class="spec-path" id="spec-path">（尚未設定資料夾）</div>
+        <div class="spec-actions">
+          <button type="button" class="btn small" id="spec-change">變更資料夾</button>
+          <button type="button" class="btn small primary" id="spec-scan">掃描規範</button>
+        </div>
+        <p class="hint spec-status" id="spec-status" role="status" aria-live="polite"></p>
+        <progress id="spec-progress" max="100" value="0" hidden aria-label="掃描進度"></progress>
       </div>
-      <ul class="list" id="doc-list" aria-label="已匯入的規範"></ul>
-      <div class="rules-summary">
-        <span id="rules-summary-text">尚未建立規則</span>
-        <button type="button" class="btn" id="rules-open">編輯規則…</button>
-      </div>
+      <ul class="spec-counts" id="spec-counts" aria-label="規範規則整理結果">
+        <li data-bucket="usable"><b id="cnt-usable">0</b><span>可直接使用</span></li>
+        <li data-bucket="review"><b id="cnt-review">0</b><span>需要確認</span></li>
+        <li data-bucket="conflict"><b id="cnt-conflict">0</b><span>規範衝突</span></li>
+        <li data-bucket="not_enforceable"><b id="cnt-not_enforceable">0</b><span>無法自動檢查</span></li>
+      </ul>
+      <button type="button" class="btn" id="review-open">查看規則</button>
+      <p class="hint">規範規則擷取只是輔助整理，不代表法律或契約解釋；「需要確認」和「規範衝突」的規則不會自行執行。</p>
+      <details class="adv-settings" id="adv-settings">
+        <summary>進階設定</summary>
+        <div class="drop" id="drop-spec" tabindex="0" role="button" aria-label="匯入單一規範檔：把 PDF、Word、TXT 或 Markdown 檔拖到這裡，或按 Enter 選擇檔案">
+          <strong>也可以把單一規範檔拖到這裡</strong>
+          <small>PDF、Word（.docx）、TXT、Markdown</small>
+          <input type="file" id="file-spec" accept=".pdf,.docx,.txt,.md,.markdown" multiple hidden>
+        </div>
+        <ul class="list" id="doc-list" aria-label="已匯入的規範"></ul>
+        <label class="adv-label" for="glossary-text">名詞對照（規範用語 = 圖層名稱樣式，每行一組）</label>
+        <textarea id="glossary-text" rows="4" spellcheck="false" placeholder="通信 = COMM, COM-*&#10;電力 = POWER, PWR-*"></textarea>
+        <div class="rb-row"><button type="button" class="btn small" id="glossary-save">儲存名詞對照</button></div>
+        <div class="rules-summary">
+          <span id="rules-summary-text">尚未建立規則</span>
+          <button type="button" class="btn" id="rules-open">手動規則編輯器…</button>
+        </div>
+      </details>
     </section>
 
     <section class="step" id="step-run">
@@ -86,6 +110,7 @@
   <section class="results" aria-label="分析結果">
     <div class="results-head">
       <div class="chips" id="chips" role="group" aria-label="依結果篩選"></div>
+      <div class="coverage-summary" id="coverage-summary" hidden></div>
       <p class="baseline" id="baseline" hidden></p>
       <div class="results-tools" id="results-tools" hidden>
         <label class="sr-only" for="issue-search">搜尋問題</label>
@@ -98,7 +123,7 @@
         </select>
       </div>
     </div>
-    <div class="results-empty" id="results-empty">還沒有分析結果。<br>匯入圖面與規範、建立規則後，按左側的「開始分析」。</div>
+    <div class="results-empty" id="results-empty">還沒有分析結果。<br>匯入圖面、掃描規範並確認規則後，按左側的「開始分析」。</div>
     <div class="issue-list" id="issue-list" role="listbox" aria-label="問題清單" tabindex="0"></div>
     <article class="detail" id="detail" hidden aria-live="polite"></article>
     <div class="export-bar" id="export-bar" hidden>
@@ -123,6 +148,19 @@
     <button type="button" class="btn primary" id="rb-save">儲存規則</button></div>
 </dialog>
 
+<dialog id="review-dialog" class="big" aria-labelledby="review-title">
+  <div class="dlg-head"><h2 id="review-title">規範規則</h2>
+    <button type="button" class="btn small" id="review-close" aria-label="關閉">關閉</button></div>
+  <div class="rv-bar">
+    <div class="chips" id="rv-tabs" role="group" aria-label="依狀態篩選"></div>
+    <label class="sr-only" for="rv-search">搜尋規則</label>
+    <input type="search" id="rv-search" placeholder="搜尋規則…">
+  </div>
+  <div class="rv-list" id="rv-list"></div>
+  <div class="dlg-foot"><span class="rv-gate" id="rv-gate" role="status" aria-live="polite"></span>
+    <button type="button" class="btn primary" id="rv-run">使用確認規則開始分析</button></div>
+</dialog>
+
 <dialog id="diag-dialog" class="big" aria-labelledby="diag-title">
   <div class="dlg-head"><h2 id="diag-title">診斷</h2>
     <button type="button" class="btn small" id="diag-close" aria-label="關閉">關閉</button></div>
@@ -135,7 +173,7 @@
   <form method="dialog" id="ask-form">
     <h2 id="ask-title"></h2>
     <p id="ask-text"></p>
-    <input type="text" id="ask-input" maxlength="100" hidden aria-label="輸入">
+    <input type="text" id="ask-input" maxlength="500" hidden aria-label="輸入">
     <div class="dlg-foot"><button type="button" class="btn" id="ask-cancel">取消</button>
       <button type="submit" class="btn primary" id="ask-ok">確定</button></div>
   </form>

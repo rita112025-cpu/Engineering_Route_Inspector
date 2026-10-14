@@ -8,6 +8,7 @@ from persistence.db import Database
 from persistence.repo import Repo
 from persistence.storage import Storage
 from .config import AppConfig
+from .spec_scan import ScanJobs
 
 
 @dataclass
@@ -19,6 +20,7 @@ class AppState:
     token: str
     recovery: dict = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
+    scans: ScanJobs = field(default_factory=ScanJobs)
 
     def repo(self) -> Repo:
         """Repository bound to the calling thread's own database connection."""

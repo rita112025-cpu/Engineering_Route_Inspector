@@ -40,6 +40,10 @@ def test_demo_result_is_exactly_what_was_designed(live):
     info, run = run_demo(live)
     assert run["status"] == "completed", run
     assert run["summary"]["counts"] == {"FAIL": 6, "WARNING": 1, "PASS": 26, "UNKNOWN": 2}
+    assert run["summary"]["coverage"] == {
+        "loaded": 5, "applicable": 5, "evaluated": 5, "skipped": 0,
+        "passed": 0, "failed": 5, "warning": 0, "undetermined": 0, "percent": 100.0,
+    }
     items = live.http.get(f"/api/runs/{run['id']}/issues", params={"limit": 200, "sort": "rule"}).json()["items"]
     interesting = [(i["rule_id"], i["status"], i["handles"], i["measured_text"]) for i in items
                    if i["status"] != "PASS" or i["measured_text"] and i["rule_id"] == "CLEARANCE-01"]

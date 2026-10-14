@@ -31,13 +31,14 @@ from importers.dxf import DrawingImportError, load_dxf
 from persistence.db import schema_version
 from persistence.repo import RunInProgress
 from persistence.storage import StorageError, check_id, new_id, safe_filename
-from . import diagnostics, templates
+from . import diagnostics, spec_rules, spec_scan, templates
 from .errors import ApiError, bad_request, not_found
 from .state import AppState
 
 STAGE_LABEL = dict(STAGES) | {"queued": "排隊中", "completed": "完成", "failed": "失敗", "cancelled": "已取消"}
 DOC_KINDS = {".txt": "txt", ".md": "md", ".markdown": "md", ".pdf": "pdf", ".docx": "docx"}
 MAX_RULES = 2000
+CANDIDATE_ID = re.compile(r"^cand_[0-9a-f]{16}$")
 MAX_NAME = 100
 _CTRL = re.compile(r"[\x00-\x1f\x7f‪-‮⁦-⁩]")
 
@@ -455,6 +456,133 @@ def _attachment(name: str) -> str:
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
 
 
+# ---- specification source, scan and rule candidates ---------------------------------------------------------------------
+
+def _source_of(st: AppState, pid: str) -> tuple[str | None, str]:
+    settings = st.repo().spec.settings(pid)
+    if settings["source_path"]:
+        return settings["source_path"], "project"
+    if st.config.default_spec_source:
+        return st.config.default_spec_source, "default"
+    return None, "none"
+
+
+def _source_view(st: AppState, pid: str) -> dict:
+    from pathlib import Path
+
+    from core.rule_extraction import validator as V
+    repo = st.repo()
+    settings = repo.spec.settings(pid)
+    path, origin = _source_of(st, pid)
+    views, _ = spec_rules.evaluate_project(repo, pid)
+    try:
+        exists = bool(path) and Path(path).is_dir()
+    except OSError:
+        exists = False
+    last = settings["last_scan"]
+    return {"path": path, "origin": origin, "exists": exists, "default_path": st.config.default_spec_source,
+            "glossary": {"effective": V.effective_glossary(settings["glossary"]), "project": settings["glossary"],
+                         "text": V.format_glossary_text(settings["glossary"])},
+            "scan": st.scans.status(pid), "last_scan": last,
+            "file_status": repo.spec.file_status_counts(pid, last["root"]) if last else {},
+            "reasons": spec_scan.REASON_ZH, "documents": len(repo.list_documents(pid)),
+            "summary": spec_rules.summarize(views), "gate": spec_rules.gate(repo, pid, views)}
+
+
+def get_spec_source(request: Request):
+    pid = project_of(request)["id"]
+    return JSONResponse(_source_view(S(request), pid))
+
+
+async def put_spec_source(request: Request):
+    body = await json_body(request)
+    if not isinstance(body, dict) or not ({"path", "glossary_text"} & set(body)):
+        raise bad_request("沒有要修改的內容。")
+
+    def work():
+        from core.rule_extraction import validator as V
+        st = S(request)
+        pid = project_of(request)["id"]
+        repo = st.repo()
+        if "path" in body:
+            if body["path"] is None or (isinstance(body["path"], str) and not body["path"].strip()):
+                repo.spec.set_source_path(pid, None)                     # back to the default folder of the application
+            else:
+                repo.spec.set_source_path(pid, str(spec_scan.validate_source_path(body["path"], st.config.data_dir)))
+            repo.audit("spec.source", pid, {"set": bool(body["path"])})
+        if "glossary_text" in body:
+            if not isinstance(body["glossary_text"], str) or len(body["glossary_text"]) > 20000:
+                raise bad_request("名詞對照的格式不正確。")
+            repo.spec.set_glossary(pid, V.parse_glossary_text(body["glossary_text"]))
+            repo.audit("spec.glossary", pid)
+        spec_rules.refresh_statuses(repo, pid)
+        return _source_view(st, pid)
+    return JSONResponse(await run_in_threadpool(work))
+
+
+async def start_spec_scan(request: Request):
+    try:
+        body = await json_body(request)
+    except ApiError:
+        body = {}
+    wait = isinstance(body, dict) and body.get("wait") is True
+
+    def work():
+        st = S(request)
+        pid = project_of(request)["id"]
+        path, _ = _source_of(st, pid)
+        if not path:
+            if not st.repo().list_documents(pid):
+                raise bad_request("還沒有設定規範來源資料夾。請先輸入資料夾路徑。", "NO_SOURCE")
+            return st.scans.start(st, pid, None, wait=wait)          # no folder: read the documents imported by hand
+        root = spec_scan.validate_source_path(path, st.config.data_dir)
+        return st.scans.start(st, pid, root, wait=wait)
+    return JSONResponse(await run_in_threadpool(work), status_code=200 if wait else 202)
+
+
+def get_spec_scan(request: Request):
+    return JSONResponse(S(request).scans.status(project_of(request)["id"]))
+
+
+def _cid(request: Request) -> str:
+    cid = request.path_params["cid"]
+    if not CANDIDATE_ID.match(cid):
+        raise not_found("規則候選")
+    return cid
+
+
+def list_rule_candidates(request: Request):
+    pid = project_of(request)["id"]
+    q = request.query_params
+    try:
+        offset, limit = max(0, int(q.get("offset", 0))), max(1, min(int(q.get("limit", 100)), 500))
+    except ValueError:
+        raise bad_request("offset / limit 必須是整數。") from None
+    return JSONResponse(spec_rules.list_candidates(S(request).repo(), pid, q.get("bucket"), (q.get("q") or "").strip(),
+                                                   offset, limit))
+
+
+def get_rule_candidate(request: Request):
+    return JSONResponse(spec_rules.get_candidate(S(request).repo(), project_of(request)["id"], _cid(request)))
+
+
+async def patch_rule_candidate(request: Request):
+    body = await json_body(request)
+    cid = _cid(request)
+    return JSONResponse(await run_in_threadpool(
+        lambda: spec_rules.patch_candidate(S(request).repo(), project_of(request)["id"], cid, body)))
+
+
+async def apply_rule_candidates(request: Request):
+    def work():
+        repo = S(request).repo()
+        pid = project_of(request)["id"]
+        out = spec_rules.apply_candidates(repo, pid)
+        views, _ = spec_rules.evaluate_project(repo, pid)
+        return {**out, "summary": spec_rules.summarize(views), "gate": spec_rules.gate(repo, pid, views)}
+    return JSONResponse(await run_in_threadpool(work))
+
+
 # ---- runs ----------------------------------------------------------------------------------------------------
 
 async def start_run(request: Request):
@@ -473,9 +601,12 @@ async def start_run(request: Request):
             d = None
         if d is None or d["project_id"] != p["id"]:
             raise bad_request("請先選擇要分析的圖面。", "NO_DRAWING")
+        if body.get("apply_candidates", True) and spec_rules.has_spec_material(repo, p["id"]):
+            spec_rules.apply_candidates(repo, p["id"])        # only the CONFIRMED rules run; the rest wait
         rs = repo.get_ruleset(p["id"])
         if not any(r.get("enabled", True) for r in rs["rules"]):
-            raise bad_request("還沒有可用的規則。請先匯入規範並建立規則，或載入示範專案。", "NO_RULES")
+            raise bad_request("還沒有可執行的規則。請先掃描規範並確認規則（需要至少一條「可直接使用」的規則），"
+                              "或在進階設定用手動規則編輯器建立規則，或載入示範專案。", "NO_RULES")
         base = body.get("baseline_run_id", "auto")
         if base == "auto":
             prev = repo.latest_completed_run(p["id"], d["logical_name"])
@@ -597,6 +728,14 @@ ROUTES = [
     Route("/api/documents/{doc}", delete_document, methods=["DELETE"]),
     Route("/api/projects/{pid}/evidence", list_evidence),
     Route("/api/projects/{pid}/evidence/{eid}", get_evidence),
+    Route("/api/projects/{pid}/spec-source", get_spec_source, methods=["GET"]),
+    Route("/api/projects/{pid}/spec-source", put_spec_source, methods=["PUT"]),
+    Route("/api/projects/{pid}/spec-scan", get_spec_scan, methods=["GET"]),
+    Route("/api/projects/{pid}/spec-scan", start_spec_scan, methods=["POST"]),
+    Route("/api/projects/{pid}/rule-candidates", list_rule_candidates, methods=["GET"]),
+    Route("/api/projects/{pid}/rule-candidates/apply", apply_rule_candidates, methods=["POST"]),
+    Route("/api/projects/{pid}/rule-candidates/{cid}", get_rule_candidate, methods=["GET"]),
+    Route("/api/projects/{pid}/rule-candidates/{cid}", patch_rule_candidate, methods=["PATCH"]),
     Route("/api/rule-templates", rule_templates),
     Route("/api/projects/{pid}/rules", get_rules, methods=["GET"]),
     Route("/api/projects/{pid}/rules", put_rules, methods=["PUT"]),

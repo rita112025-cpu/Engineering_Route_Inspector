@@ -18,6 +18,8 @@ Rule::
     "measurement": "horizontal_clearance", "operator": ">=", "value": 300, "unit": "mm",
     "warn_margin": 50,
     "evidence_id": "EV-...", "evidence_ref": {"document": "spec.txt", "quote": "300 mm"},
+    "source": {"document": "Appendix C", "section": "4.2", "page": 12,
+               "clause": "4.2.1", "evidence_id": "EV-..."},
     "fix_hint": "...", "description": "...", "enabled": true
   }
 """
@@ -34,7 +36,7 @@ PAIR_MEASUREMENTS = {"distance", "minimum_distance", "horizontal_clearance", "ve
                      "intersection", "overlap"}
 ZONE_MEASUREMENTS = {"inside_zone", "outside_zone"}
 SINGLE_MEASUREMENTS = {"length", "angle", "off_axis_angle"}
-GLOBAL_MEASUREMENTS = {"entity_count"}
+GLOBAL_MEASUREMENTS = {"entity_count", "entity_exists", "connectivity"}
 MEASUREMENTS = PAIR_MEASUREMENTS | ZONE_MEASUREMENTS | SINGLE_MEASUREMENTS | GLOBAL_MEASUREMENTS
 OPERATORS = {">=", ">", "<=", "<", "==", "!="}
 SEVERITIES = {"FAIL", "WARNING"}
@@ -48,6 +50,7 @@ MEASUREMENT_ZH = {
     "vertical_clearance": "垂直淨距", "intersection": "交叉", "overlap": "重疊長度",
     "inside_zone": "位於區域內", "outside_zone": "位於區域外", "length": "長度",
     "angle": "角度", "off_axis_angle": "偏離正交角度", "entity_count": "物件數量",
+    "entity_exists": "指定物件存在", "connectivity": "路徑連通性",
 }
 
 DISTANCE_MEASUREMENTS = {"distance", "minimum_distance", "horizontal_clearance", "vertical_clearance"}
@@ -102,6 +105,18 @@ def normalize_rule(raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(m, str) or m not in MEASUREMENTS:
         errs.append(f"{label}: 不支援的檢查方式 {m!r}")
         m = None                      # later checks only look at a valid measurement
+    if m == "entity_exists":
+        r.setdefault("operator", ">=")
+        r.setdefault("value", 1)
+        r.setdefault("unit", "count")
+    if m == "connectivity":
+        r.setdefault("operator", "==")
+        r.setdefault("value", 1)
+        r.setdefault("unit", "count")
+        tolerance = r.get("snap_tolerance_mm")
+        if (isinstance(tolerance, bool) or not isinstance(tolerance, (int, float))
+                or not math.isfinite(tolerance) or tolerance < 0):
+            errs.append(f"{label}: connectivity 需要非負數值 snap_tolerance_mm")
     if m in ("inside_zone", "outside_zone"):
         r.setdefault("operator", "==")
         r.setdefault("value", 1)
@@ -151,6 +166,22 @@ def normalize_rule(raw: dict[str, Any]) -> dict[str, Any]:
         errs.append(f"{label}: {exc}")
     if r.get("evidence_id") is not None and not isinstance(r["evidence_id"], str):
         errs.append(f"{label}: evidence_id 必須是文字")
+    source = r.get("source")
+    if source is not None:
+        allowed_source = {"document", "section", "page", "clause", "evidence_id"}
+        if not isinstance(source, dict):
+            errs.append(f"{label}: source 必須是物件")
+        else:
+            unknown = set(source) - allowed_source
+            if unknown:
+                errs.append(f"{label}: source 含有未知欄位 {sorted(unknown)}")
+            for key in allowed_source - {"page"}:
+                if source.get(key) is not None and not isinstance(source[key], str):
+                    errs.append(f"{label}: source.{key} 必須是文字")
+            if source.get("page") is not None and not isinstance(source["page"], (str, int)):
+                errs.append(f"{label}: source.page 必須是文字或整數")
+            if not r.get("evidence_id") and isinstance(source.get("evidence_id"), str):
+                r["evidence_id"] = source["evidence_id"]
     ref = r.get("evidence_ref")
     if ref is not None:
         if not isinstance(ref, dict) or not isinstance(ref.get("quote", ""), str):

@@ -66,7 +66,8 @@ def test_s2_threads_migrating_the_same_new_database(tmp_path):
         [t.start() for t in ts]
         [t.join() for t in ts]
         c = DB.connect(path)
-        assert [r["version"] for r in c.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2]
+        assert [r["version"] for r in c.execute("SELECT version FROM schema_migrations ORDER BY version")] == \
+            [m.version for m in DB.load_migrations()]
         c.close()
     assert errors == []
 
@@ -83,7 +84,7 @@ def test_s2_processes_migrating_the_same_new_database(tmp_path):
         results.append((proc.returncode, err.decode()))
     assert [r[0] for r in results] == [0, 0, 0, 0], results
     c = DB.connect(path)
-    assert DB.schema_version(c) == 2
+    assert DB.schema_version(c) == len(DB.load_migrations())
     c.close()
 
 

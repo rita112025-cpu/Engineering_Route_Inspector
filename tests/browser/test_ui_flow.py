@@ -46,6 +46,7 @@ def loaded(ui, sample_dxf):
     page.wait_for_selector("#project-select option", state="attached")
     drop_file(page, "#drop-drawing", "plan.dxf", sample_dxf.read_bytes())
     page.wait_for_selector("#drawing-list li")
+    page.evaluate("() => { document.querySelector('#adv-settings').open = true; }")     # 進階設定
     drop_file(page, "#drop-spec", "spec.md", SPEC.encode("utf-8"))
     page.wait_for_selector("#doc-list li")
     return page, srv, errors
@@ -195,6 +196,7 @@ def test_unsupported_files_get_clear_messages(ui):
     drop_file(page, "#drop-drawing", "plan.dwg", b"AC1027")
     page.wait_for_selector(".toast.error")
     assert "DWG" in page.inner_text(".toast.error") and "DXF" in page.inner_text(".toast.error")
+    page.evaluate("() => { document.querySelector('#adv-settings').open = true; }")
     drop_file(page, "#drop-spec", "notes.exe", b"MZ")
     page.wait_for_function("() => document.querySelectorAll('.toast.error').length >= 2")
     assert any("不支援的檔案" in t for t in toast_texts(page))
@@ -258,7 +260,7 @@ def test_rule_builder_validation_and_editing(loaded):
     page.click("#rules-close")
     page.click("#ask-ok")
     page.wait_for_selector("#rules-dialog", state="hidden")
-    assert "尚未建立規則" in page.inner_text("#rules-summary-text")     # nothing was saved
+    assert "還沒有規則" in page.inner_text("#rules-summary-text")       # nothing was saved
     # the only console error is the 400 this test provoked on purpose (the empty form); nothing else
     assert [e for e in errors if "status of 400" not in e] == [], errors
     assert sum("status of 400" in e for e in errors) == 1, errors
