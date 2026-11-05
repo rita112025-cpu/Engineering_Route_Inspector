@@ -110,6 +110,11 @@ def point_in_polygon(p: Point, poly: list[Point]) -> bool:
     return inside
 
 
+def point_in_circle(p: Point, c: Point, r: float) -> bool:
+    """Exact disc test; points on the rim count as inside (same tolerance as point_in_polygon)."""
+    return math.dist(p, c) <= r + _tol(p, c) * 10
+
+
 def collinear_overlap_length(a: Point, b: Point, c: Point, d: Point, tol: float = 1e-6) -> float:
     """Length of the shared part of two collinear segments (0 if not collinear)."""
     la = math.dist(a, b)

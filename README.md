@@ -172,6 +172,10 @@ python scripts/package_release.py                     # 發行用 ZIP → dist/E
 
 - 瀏覽器測試用 Playwright 操作無頭 Chromium；沒有安裝 Playwright 或 Chromium 時會被略過
   （可用 `playwright install chromium` 安裝，或以 `ERI_CHROMIUM` 指定現有的 Chrome／Chromium）。
+- `tests/unit/test_geometry_shapely_reference.py` 以 Shapely 為獨立參考，交叉驗證距離、交叉、包含與區域判斷。Shapely 只列在 `requirements-dev.txt`，`src/` 不使用。
+  封閉圖形以「填滿區域」比較，所以完全包含時距離為 0；外框之間的間距另外檢查。
+  這組測試找到並已修正：圓的包含判斷原本使用 180 邊形，落在弦與圓弧之間的物件（半徑 1000 時最多約 0.15）會被判為圓外，
+  圓形禁設區的 `outside_zone` 可能因此誤判為通過。現在改用真圓判斷，距離計算與圓形區域判斷都已涵蓋。
 - 測試使用真實 DXF 檔、真實的背景分析程序與真實的伺服器。部分防護（例如啟動腳本不覆寫主機位址）另以手動移除防護、確認測試會失敗的方式檢查過；這些檢查沒有寫成自動化測試。
 - 程式碼在 `src/`：`core/`（幾何、規則、問題編號、基準比對）、`importers/`、`persistence/`、`jobs/`、
   `exporters/`、`app/`（API 與網頁）。
@@ -203,7 +207,7 @@ python scripts/package_release.py                     # 預設打包 HEAD；--re
 
 ## 驗證狀態
 
-目前測試收集共 816 項（單元 184、整合 258、回歸 237、安全 113、效能 11、瀏覽器 13）。收集數包含依平台或環境略過的測試，不代表全部通過。
+目前測試收集共 852 項（單元 220、整合 258、回歸 237、安全 113、效能 11、瀏覽器 13）。收集數包含依平台或環境略過的測試，不代表全部通過。
 
 2026-10-03 在 Windows 11（10.0.26300，Intel Core Ultra 9 275HX、31.4 GB RAM）、Python 3.12.10、pytest 9.1.1、ezdxf 1.4.4、uvicorn 0.54.0 驗證。
 

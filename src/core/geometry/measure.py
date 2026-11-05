@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from core.models.entities import GeometryEntity, Point
 from .primitives import (
     bbox_distance, closest_point_on_segment, collinear_overlap_length, line_intersection_point,
-    point_in_polygon, segment_angle_deg, segment_distance, segments_intersect, off_axis_deg,
+    point_in_circle, point_in_polygon, segment_angle_deg, segment_distance, segments_intersect, off_axis_deg,
 )
 
 
@@ -39,6 +39,13 @@ def _containment(a: GeometryEntity, b: GeometryEntity) -> Point | None:
         # inner's bbox, so disjoint bboxes cannot contain anything: skip without building the vertex lists
         # (a circle's vertices cost 180 sin/cos pairs each time).
         if ib[0] > ob[2] or ob[0] > ib[2] or ib[1] > ob[3] or ob[1] > ib[3]:
+            continue
+        if outer.kind == "circle":
+            # the true disc, not the 180-gon: a vertex between a chord and the arc is still inside
+            c, r = tuple(outer.geometry["center"]), outer.geometry["radius"]
+            for v in inner.vertices():
+                if point_in_circle(v, c, r):
+                    return v
             continue
         poly = outer.vertices()
         for v in inner.vertices():
@@ -217,6 +224,17 @@ def zone_relation(subject: GeometryEntity, zone: GeometryEntity) -> str:
         return "outside"
     if bbox_distance(subject.bbox, zone.bbox) > 0:
         return "outside"
+    if zone.kind == "circle":
+        # a disc is convex, so the subject is inside exactly when all its vertices are (a circle subject: its rim)
+        c, r = tuple(zone.geometry["center"]), zone.geometry["radius"]
+        tol = 1e-8 * max(1.0, abs(c[0]), abs(c[1]), r)
+        if subject.kind == "circle":
+            inside = math.dist(tuple(subject.geometry["center"]), c) + subject.geometry["radius"] <= r + tol
+        else:
+            inside = all(point_in_circle(v, c, r) for v in subject.vertices())
+        if inside:
+            return "inside"
+        return "partial" if entity_distance(subject, zone).distance <= tol else "outside"
     poly = zone.vertices()
     inside_flags = [point_in_polygon(v, poly) for v in subject.vertices()]
     if all(inside_flags) and all(_segment_inside_polygon(a, b, poly) for a, b in subject.segments()):

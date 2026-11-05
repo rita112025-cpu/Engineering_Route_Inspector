@@ -1,6 +1,8 @@
 # Tools for running the tests (tests/): pytest, and httpx as the HTTP client of the integration tests.
 pytest>=8,<10
 httpx>=0.27,<1
+# Independent geometry reference for tests/unit/test_geometry_shapely_reference.py; never imported by src/.
+shapely>=2.0,<3
 -r requirements.txt
 # Browser tests (tests/browser) drive a real headless Chromium. Optional: without Playwright or a
 # Chromium build those tests are skipped. Install a browser with `playwright install chromium`, or

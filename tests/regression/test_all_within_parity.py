@@ -2,8 +2,9 @@
 
 Three independent oracles:
 
-1. ``measure._containment`` (which got an early exit): compared with a verbatim copy of the previous
-   implementation on thousands of random shape pairs.
+1. ``measure._containment`` (which got an early exit): compared with a copy of the previous implementation on
+   thousands of random shape pairs. The copy carries one later, deliberate change: a circle contains what lies in
+   its true disc rather than its 180-gon (checked against Shapely in tests/unit/test_geometry_shapely_reference.py).
 2. A straightforward ALL-WITHIN evaluator that uses no spatial index and no search cutoff: every subject is
    compared with every eligible target through ``entity_distance``.
 3. Golden hashes of the complete result list of the benchmark drawing (1,000 and 10,000 objects), produced by
@@ -25,7 +26,7 @@ import pytest
 from core.analysis.pipeline import run_analysis
 from core.geometry import measure
 from core.geometry.measure import entity_distance
-from core.geometry.primitives import point_in_polygon
+from core.geometry.primitives import point_in_circle, point_in_polygon
 from core.models.entities import make_circle, make_polyline
 from core.rules import predicate as P
 from core.rules.engine import Cancelled, RuleContext, RuleEvaluator, evaluate_rule
@@ -66,9 +67,14 @@ def fingerprint(out) -> list:
 # -- 1. _containment against the previous implementation --------------------------------------------------------
 
 def _old_containment(a, b):
-    """Verbatim copy of measure._containment before the early exit."""
+    """measure._containment before the early exit, with circles tested against their true disc."""
     for outer, inner in ((a, b), (b, a)):
         if not outer.closed:
+            continue
+        if outer.kind == "circle":
+            for v in inner.vertices():
+                if point_in_circle(v, tuple(outer.geometry["center"]), outer.geometry["radius"]):
+                    return v
             continue
         poly = outer.vertices()
         ob = outer.bbox
